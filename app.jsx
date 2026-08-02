@@ -567,6 +567,19 @@ function GlobalStyle() {
         font-size:9px; font-weight:700; margin-right:6px; vertical-align:middle; letter-spacing:0; }
       .sn-textarea.serif { font-family:'Newsreader',Georgia,serif; font-size:15.5px; line-height:1.6; }
 
+      /* Draft status */
+      .sn-draftbar { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft);
+        padding:9px 2px 2px; }
+      .sn-draftbar.restored { background:var(--iris-tint); border:1px solid var(--iris);
+        color:var(--iris-deep); border-radius:10px; padding:10px 12px; font-size:12.5px;
+        font-weight:500; margin-bottom:14px; justify-content:space-between; }
+      .sn-draftbar.restored button { background:none; border:none; color:var(--iris-deep);
+        font-family:'Figtree',sans-serif; font-size:12.5px; font-weight:700; text-decoration:underline;
+        cursor:pointer; padding:0; flex-shrink:0; }
+      .sn-dotsave { width:6px; height:6px; border-radius:50%; background:var(--line); flex-shrink:0;
+        transition:background .2s; }
+      .sn-dotsave.on { background:#4E8A5C; }
+
       .sn-freq { display:flex; align-items:center; justify-content:space-between; background:var(--card);
         border:1px solid var(--line); border-radius:10px; padding:11px 13px; margin-bottom:8px; cursor:pointer; }
       .sn-freq-ct { background:var(--iris-tint); color:var(--iris-deep); font-weight:700; font-size:11.5px;
@@ -950,14 +963,148 @@ function emptyNote() {
   };
 }
 
+
+/* ===============================================================
+   DRAFTS
+   ---------------------------------------------------------------
+   Anything typed into a form is written to disk continuously, so
+   leaving the screen — switching tabs, taking a call, the OS
+   reclaiming memory mid-service — never loses work.
+   =============================================================== */
+async function loadDraft(kind) {
+  try {
+    const r = await storage.get("draft-" + kind);
+    return r ? JSON.parse(r.value) : null;
+  } catch { return null; }
+}
+async function saveDraft(kind, obj) {
+  try { await storage.set("draft-" + kind, JSON.stringify(obj)); return true; }
+  catch { return false; }
+}
+async function clearDraft(kind) {
+  try { await storage.delete("draft-" + kind); } catch {}
+}
+
+/* Is there anything in here worth keeping? */
+function isBlankSermon(n) {
+  return !n.title?.trim() && !n.bigIdea?.trim() && !n.speaker?.trim() &&
+    !n.series?.trim() && !n.application?.trim() && !n.freeNotes?.trim() &&
+    (n.mainPassage || []).length === 0 && (n.photos || []).length === 0 &&
+    (n.points || []).every((p) => !p.header?.trim() &&
+      (p.verses || []).length === 0 &&
+      (p.items || []).every((i) => !i.text?.trim() && (i.verses || []).length === 0));
+}
+function isBlankDevotion(d) {
+  return !d.title?.trim() && !d.mood &&
+    (d.passage || []).length === 0 && (d.crossRefs || []).length === 0 &&
+    (d.photos || []).length === 0 &&
+    Object.values(d.fields || {}).every((v) => !v?.trim());
+}
+
+/* Shared autosave wiring for both forms */
+function useDraft(kind, value, isBlank, active) {
+  const [status, setStatus] = useState("idle");   // idle | saving | saved
+  const first = useRef(true);
+  const latest = useRef(value);
+  latest.current = value;
+
+  /* Debounced save while typing */
+  useEffect(() => {
+    if (!active) return;
+    if (first.current) { first.current = false; return; }
+    if (isBlank(value)) return;
+
+    setStatus("saving");
+    const t = setTimeout(async () => {
+      await saveDraft(kind, value);
+      setStatus("saved");
+    }, 500);
+    return () => clearTimeout(t);
+  }, [value, active, kind]);
+
+  /* Flush immediately when the screen goes away or the app is backgrounded,
+     so the last few keystrokes before a tab switch aren't stranded in the
+     debounce window. */
+  useEffect(() => {
+    if (!active) return;
+
+    const flush = () => {
+      if (!isBlank(latest.current)) saveDraft(kind, latest.current);
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flush);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flush);
+      flush();   // unmounting counts too — this is the tab-switch case
+    };
+  }, [active, kind]);
+
+  return status;
+}
+
+function DraftBar({ status, restored, onDiscard }) {
+  if (restored) {
+    return (
+      <div className="sn-draftbar restored">
+        <span>Unsaved draft restored.</span>
+        <button onClick={onDiscard}>Discard it</button>
+      </div>
+    );
+  }
+  if (status === "idle") return null;
+  return (
+    <div className="sn-draftbar">
+      <span className={"sn-dotsave" + (status === "saved" ? " on" : "")} />
+      {status === "saved" ? "Draft saved on this device" : "Saving…"}
+    </div>
+  );
+}
+
 function NoteForm({ initial, onSave, onCancel }) {
   const [note, setNote] = useState(initial || emptyNote());
+  const [restored, setRestored] = useState(false);
+  const [ready, setReady] = useState(!!initial);
   const set = (k, v) => setNote((n) => ({ ...n, [k]: v }));
+
+  /* Pick up anything left behind last time this screen was open */
+  useEffect(() => {
+    if (initial) return;
+    let alive = true;
+    loadDraft("sermon").then((d) => {
+      if (!alive) return;
+      if (d && !isBlankSermon(d)) { setNote(d); setRestored(true); }
+      setReady(true);
+    });
+    return () => { alive = false; };
+  }, [initial]);
+
+  const draftStatus = useDraft("sermon", note, isBlankSermon, ready);
+
+  const discardDraft = async () => {
+    await clearDraft("sermon");
+    setNote(emptyNote());
+    setRestored(false);
+  };
+
+  const submit = async () => {
+    await clearDraft("sermon");
+    onSave(note);
+  };
+
+  const cancel = async () => {
+    await clearDraft("sermon");
+    onCancel();
+  };
   const patchPoint = (id, patch) =>
     setNote((n) => ({ ...n, points: n.points.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
 
   return (
     <div className="sn-scroll">
+      {restored && <DraftBar restored onDiscard={discardDraft} />}
       <div className="sn-field">
         <label className="sn-label">Sermon title</label>
         <input className="sn-input" placeholder="e.g. Grace That Sustains"
@@ -1036,10 +1183,11 @@ function NoteForm({ initial, onSave, onCancel }) {
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-        {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>}
+        {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={cancel}>Cancel</button>}
         <button className="sn-btn sn-btn-iris" style={{ flex: 2 }} disabled={!note.title.trim()}
-          onClick={() => onSave(note)}>{initial ? "Save changes" : "Save note"}</button>
+          onClick={submit}>{initial ? "Save changes" : "Save note"}</button>
       </div>
+      <DraftBar status={draftStatus} restored={restored} onDiscard={discardDraft} />
     </div>
   );
 }
@@ -1488,7 +1636,30 @@ const devotionText = (d) => Object.values(migrateDevotion(d).fields || {}).join(
 
 function DevotionForm({ initial, onSave, onCancel }) {
   const [d, setD] = useState(initial ? migrateDevotion(initial) : emptyDevotion());
+  const [restored, setRestored] = useState(false);
+  const [ready, setReady] = useState(!!initial);
   const set = (k, v) => setD((x) => ({ ...x, [k]: v }));
+
+  useEffect(() => {
+    if (initial) return;
+    let alive = true;
+    loadDraft("devotion").then((saved) => {
+      if (!alive) return;
+      if (saved && !isBlankDevotion(saved)) { setD(migrateDevotion(saved)); setRestored(true); }
+      setReady(true);
+    });
+    return () => { alive = false; };
+  }, [initial]);
+
+  const draftStatus = useDraft("devotion", d, isBlankDevotion, ready);
+
+  const discardDraft = async () => {
+    await clearDraft("devotion");
+    setD(emptyDevotion());
+    setRestored(false);
+  };
+  const submit = async () => { await clearDraft("devotion"); onSave(d); };
+  const cancel = async () => { await clearDraft("devotion"); onCancel(); };
   const setField = (id, v) => setD((x) => ({ ...x, fields: { ...x.fields, [id]: v } }));
 
   const method = METHODS[d.method] || METHODS.free;
@@ -1508,6 +1679,7 @@ function DevotionForm({ initial, onSave, onCancel }) {
 
   return (
     <div className="sn-scroll">
+      {restored && <DraftBar restored onDiscard={discardDraft} />}
       <div style={{ display: "flex", gap: 10, width: "100%" }}>
         <div className="sn-field" style={{ flex: "1 1 auto", minWidth: 0 }}>
           <label className="sn-label">Title</label>
@@ -1574,11 +1746,12 @@ function DevotionForm({ initial, onSave, onCancel }) {
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-        {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>}
+        {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={cancel}>Cancel</button>}
         <button className="sn-btn sn-btn-iris" style={{ flex: 2 }}
           disabled={!hasWriting && d.passage.length === 0}
-          onClick={() => onSave(d)}>{initial ? "Save changes" : "Save devotion"}</button>
+          onClick={submit}>{initial ? "Save changes" : "Save devotion"}</button>
       </div>
+      <DraftBar status={draftStatus} restored={restored} onDiscard={discardDraft} />
     </div>
   );
 }
