@@ -204,6 +204,201 @@ function compressImage(file, maxEdge = 1600, quality = 0.72) {
 const approxKB = (dataUrl) => Math.round((dataUrl.length * 0.75) / 1024);
 
 /* ===============================================================
+   READING PLANS — coverage based
+   ---------------------------------------------------------------
+   The plan tracks WHAT you've read, not which day you're on. Read
+   John 1:1-6 anywhere, any time, and it comes off the unread list.
+   A guided order and a deadline are both optional layers on top of
+   that record, never the thing itself.
+   =============================================================== */
+const NT_START = 39;
+
+const SCOPES = [
+  { id: "all",      label: "Whole Bible",     books: "all" },
+  { id: "nt",       label: "New Testament",   books: "nt" },
+  { id: "ot",       label: "Old Testament",   books: "ot" },
+  { id: "gospels",  label: "The Gospels",     books: ["Matthew", "Mark", "Luke", "John"] },
+  { id: "psalms",   label: "Psalms",          books: ["Psalms"] },
+  { id: "proverbs", label: "Proverbs",        books: ["Proverbs"] },
+  { id: "pauline",  label: "Paul's Letters",  books: ["Romans", "1 Corinthians", "2 Corinthians",
+    "Galatians", "Ephesians", "Philippians", "Colossians", "1 Thessalonians", "2 Thessalonians",
+    "1 Timothy", "2 Timothy", "Titus", "Philemon"] },
+];
+
+function scopeBooks(scopeId) {
+  const scope = SCOPES.find((s) => s.id === scopeId) || SCOPES[0];
+  if (scope.books === "all") return BOOKS;
+  if (scope.books === "nt") return BOOKS.slice(NT_START);
+  if (scope.books === "ot") return BOOKS.slice(0, NT_START);
+  return BOOKS.filter((b) => scope.books.includes(b.name));
+}
+
+const bookByName = (name) => BOOKS.find((b) => b.name === name);
+
+/* ---------------- coverage ----------------
+   { "John 1": [[1,6],[10,14]] } — merged, sorted verse ranges.
+------------------------------------------- */
+function parseReading(ref) {
+  const withVerses = ref.match(/^(.+?)\s+(\d+):(\d+)(?:\s*[-–]\s*(\d+))?$/);
+  if (withVerses) {
+    const [, book, ch, a, b] = withVerses;
+    if (!bookByName(book)) return null;
+    return { book, ch: +ch, start: +a, end: b ? +b : +a };
+  }
+  const chapterOnly = ref.match(/^(.+?)\s+(\d+)$/);
+  if (chapterOnly) {
+    const [, book, ch] = chapterOnly;
+    const bk = bookByName(book);
+    if (!bk || !bk.verses[+ch - 1]) return null;
+    return { book, ch: +ch, start: 1, end: bk.verses[+ch - 1] };
+  }
+  return null;
+}
+
+function mergeRanges(ranges) {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const [s, e] of sorted) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1] + 1) last[1] = Math.max(last[1], e);
+    else out.push([s, e]);
+  }
+  return out;
+}
+
+const rangeTotal = (ranges) => (ranges || []).reduce((sum, [a, b]) => sum + (b - a + 1), 0);
+
+function addToCoverage(coverage, ref) {
+  const parsed = parseReading(ref);
+  if (!parsed) return coverage;
+  const key = `${parsed.book} ${parsed.ch}`;
+  const next = { ...coverage };
+  next[key] = mergeRanges([...(next[key] || []), [parsed.start, parsed.end]]);
+  return next;
+}
+
+function removeFromCoverage(coverage, key) {
+  const next = { ...coverage };
+  delete next[key];
+  return next;
+}
+
+function chapterDone(coverage, book, ch) {
+  const bk = bookByName(book);
+  if (!bk) return false;
+  return rangeTotal(coverage[`${book} ${ch}`]) >= bk.verses[ch - 1];
+}
+
+/* Totals for a scope: verses and chapters, read and outstanding */
+function coverageStats(coverage, scopeId) {
+  const books = scopeBooks(scopeId);
+  let totalVerses = 0, readVerses = 0, totalCh = 0, doneCh = 0, partialCh = 0;
+
+  books.forEach((b) => {
+    b.verses.forEach((vCount, i) => {
+      const key = `${b.name} ${i + 1}`;
+      const read = Math.min(rangeTotal(coverage[key]), vCount);
+      totalVerses += vCount;
+      readVerses += read;
+      totalCh += 1;
+      if (read >= vCount) doneCh += 1;
+      else if (read > 0) partialCh += 1;
+    });
+  });
+
+  return {
+    totalVerses, readVerses, totalCh, doneCh, partialCh,
+    pct: totalVerses ? Math.round((readVerses / totalVerses) * 100) : 0,
+  };
+}
+
+/* The next thing not yet fully read, in canonical order */
+function nextUnread(coverage, scopeId) {
+  for (const b of scopeBooks(scopeId)) {
+    for (let i = 0; i < b.verses.length; i++) {
+      if (!chapterDone(coverage, b.name, i + 1)) {
+        const read = rangeTotal(coverage[`${b.name} ${i + 1}`]);
+        return { book: b.name, ch: i + 1, partial: read > 0, versesRead: read,
+                 versesTotal: b.verses[i] };
+      }
+    }
+  }
+  return null;
+}
+
+/* Suggest a sensible next sitting: the next few unread chapters */
+function suggestNext(coverage, scopeId, count = 3) {
+  const out = [];
+  for (const b of scopeBooks(scopeId)) {
+    for (let i = 0; i < b.verses.length; i++) {
+      if (!chapterDone(coverage, b.name, i + 1)) {
+        out.push({ book: b.name, ch: i + 1 });
+        if (out.length >= count) return out;
+      }
+    }
+  }
+  return out;
+}
+
+function labelChapters(list) {
+  const runs = [];
+  list.forEach((c) => {
+    const last = runs[runs.length - 1];
+    if (last && last.book === c.book && c.ch === last.end + 1) last.end = c.ch;
+    else runs.push({ book: c.book, start: c.ch, end: c.ch });
+  });
+  return runs
+    .map((r) => (r.start === r.end ? `${r.book} ${r.start}` : `${r.book} ${r.start}–${r.end}`))
+    .join(", ");
+}
+
+/* ---------------- pacing (optional) ---------------- */
+function paceStatus(plan, stats) {
+  if (!plan.paced || !plan.targetDays || !plan.startDate) return null;
+  const dayMs = 86400000;
+  const started = new Date(plan.startDate).getTime();
+  const today = new Date(new Date().toISOString().slice(0, 10)).getTime();
+  const elapsed = Math.max(1, Math.round((today - started) / dayMs) + 1);
+
+  const expectedVerses = Math.min(stats.totalVerses,
+    Math.round((elapsed / plan.targetDays) * stats.totalVerses));
+  const diffVerses = stats.readVerses - expectedVerses;
+  const versesPerDay = stats.totalVerses / plan.targetDays;
+  const daysOff = Math.round(diffVerses / versesPerDay);
+
+  const remaining = Math.max(0, plan.targetDays - elapsed);
+  const versesLeft = stats.totalVerses - stats.readVerses;
+  const neededPerDay = remaining > 0 ? Math.ceil(versesLeft / remaining) : versesLeft;
+
+  return { elapsed, daysOff, remaining, neededPerDay, onTrack: daysOff >= 0 };
+}
+
+function streakOf(log) {
+  const dates = [...new Set((log || []).map((r) => r.on))].sort().reverse();
+  if (dates.length === 0) return 0;
+  const dayMs = 86400000;
+  const today = new Date(new Date().toISOString().slice(0, 10)).getTime();
+  if (today - new Date(dates[0]).getTime() > dayMs) return 0;
+  let streak = 1;
+  for (let i = 1; i < dates.length; i++) {
+    if (new Date(dates[i - 1]).getTime() - new Date(dates[i]).getTime() === dayMs) streak++;
+    else break;
+  }
+  return streak;
+}
+
+async function loadPlan() {
+  try {
+    const r = await storage.get("reading-plan");
+    return r ? JSON.parse(r.value) : null;
+  } catch { return null; }
+}
+async function savePlan(p) {
+  try { await storage.set("reading-plan", JSON.stringify(p)); return true; }
+  catch { return false; }
+}
+
+/* ===============================================================
    TOPICS
    ---------------------------------------------------------------
    Topics attach to a reference, not to one note — tag Romans 8:28
@@ -276,314 +471,517 @@ async function saveNotes(notes) {
 function GlobalStyle() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-      html, body { margin: 0; padding: 0; }
+      @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+      /* ==============================================================
+         DESIGN NOTES
+         A notebook, not a dashboard. Three decisions drive everything:
+
+         1. Text is the interface. Scripture and your own writing are set
+            in a serif at reading sizes; the app's own furniture is small,
+            quiet sans. Almost nothing is in a box — hierarchy comes from
+            type, rules and space, so the screen stays calm when it fills
+            up mid-sermon.
+         2. One accent. Ink blue for anything actionable. Scripture gets
+            a warm ochre rule instead of a second UI colour, so verses
+            read as quoted material rather than as another button.
+         3. Generous touch targets, tight visual rhythm. 44px minimum on
+            anything tappable, but only 1px hairlines between sections.
+         ============================================================== */
+
+      * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+      html, body { margin:0; padding:0; background:#F7F3EA; }
 
       .sn-root {
-        /* Ink & ground */
-        --ink:#232746; --ink-soft:#69719A; --sky:#E7EFFA; --card:#FCFDFF; --line:#D2DEF0;
-        /* Iris — the primary accent (structure, labels, confirm) */
-        --iris:#6D4FB0; --iris-deep:#513C88; --iris-tint:#E9E1F8;
-        /* Plum — the secondary accent (scripture) */
-        --plum:#8A4FA8; --plum-tint:#F1E6F8;
-        font-family:'Figtree',sans-serif; background:var(--sky); color:var(--ink);
-        min-height:100vh; max-width:480px; margin:0 auto; position:relative; padding-bottom:86px;
+        /* -----------------------------------------------------------
+           Palette: your calls.
+           Warm and bright ground, deep forest as the working colour,
+           amber reserved for highlighting. Green never sets text —
+           it fills, edges and marks. Corners stay soft, never cut.
+           ----------------------------------------------------------- */
+
+        /* Ground — warm, bright, low glare */
+        --paper:#FDFBF6;
+        --card:#FFFFFF;
+        --rule:#E9E3D6;
+        --rule-soft:#F4EFE4;
+
+        /* Ink — warm near-black, 16:1 on paper */
+        --ink:#1A1815;
+        --ink-2:#565049;
+        --ink-3:#7C7568;
+
+        /* Forest — the working colour. Fills, edges, markers. */
+        --accent:#14503F;
+        --accent-deep:#0E3A2C;      /* for the rare link or label */
+        --accent-wash:#E8F0EB;
+
+        /* Amber — highlighting and scripture, as you asked */
+        --ochre:#C08A16;
+        --ochre-wash:#FDF3DA;
+
+        /* States */
+        --good:#14503F;
+        --alert:#9B3B21;
+
+        --r:9px;
+
+        font-family:'Inter',system-ui,sans-serif;
+        background:var(--paper);
+        color:var(--ink);
+        min-height:100vh; max-width:480px; margin:0 auto;
+        position:relative; padding-bottom:24px;
         -webkit-font-smoothing:antialiased;
       }
-      .sn-serif { font-family:'Newsreader',Georgia,serif; letter-spacing:-.005em; }
-      .sn-mono { font-family:'IBM Plex Mono',monospace; letter-spacing:.01em; }
-      .sn-scroll { padding:18px 16px 10px; }
 
-      .sn-header { padding:22px 16px 14px; border-bottom:1px solid var(--line);
-        background:linear-gradient(180deg,#F3F7FE 0%,var(--sky) 100%); }
-      .sn-header h1 { margin:0; font-size:24px; font-weight:500; letter-spacing:-.015em;
-        font-variation-settings:'opsz' 40; }
-      .sn-brand { color:var(--iris-deep); }
-      .sn-header p { margin:4px 0 0; font-size:12.5px; color:var(--ink-soft); letter-spacing:.005em; }
-      .sn-screen-name { color:var(--plum); font-weight:600; }
-      .sn-screen-sep { color:var(--line); margin:0 5px; }
+      .sn-serif { font-family:'Lora',Georgia,serif; }
+      .sn-mono  { font-family:'IBM Plex Mono',monospace; font-size:.92em; letter-spacing:-.01em; }
+      .sn-scroll { padding:16px 18px 32px; }
 
-      .sn-btn { font-family:'Figtree',sans-serif; font-weight:600; font-size:14px; border-radius:9px;
-        border:none; padding:11px 15px; cursor:pointer; transition:transform .12s, opacity .12s; }
-      .sn-btn:active { transform:scale(.97); }
-      .sn-btn:disabled { opacity:.42; }
-      .sn-btn-primary { background:var(--ink); color:var(--card); }
-      .sn-btn-iris { background:var(--iris); color:#fff; }
-      .sn-btn-ghost { background:transparent; color:var(--ink-soft); border:1px solid var(--line); }
-      .sn-btn-danger { background:var(--plum-tint); color:var(--plum); }
+      /* ---------- header: a masthead, not a chrome bar ---------- */
+      .sn-header { padding:14px 18px 12px; background:rgba(253,251,246,.93);
+        backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+        border-bottom:1px solid var(--rule); position:sticky; top:0; z-index:15; }
+      .sn-header-row { display:flex; align-items:center; gap:12px; }
+      .sn-header h1 { margin:0; flex:1; font-family:'Lora',Georgia,serif;
+        font-size:19px; font-weight:500; letter-spacing:-.01em; }
+      .sn-brand { font-weight:600; }
+      .sn-header p { display:none; }         /* the screen speaks for itself */
+      .sn-header-sp { display:none; }
+
+      .sn-burger { background:none; border:none; padding:10px 10px 10px 0; margin:-10px 0 -10px -2px;
+        cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+      .sn-burger span { display:block; width:18px; height:1.5px; background:var(--ink); border-radius:2px; }
+
+      /* ---------- type scale ---------- */
+      .sn-secttl { font-size:11px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+        color:var(--ink-3); margin:26px 0 10px; }
+      .sn-label { display:block; font-size:11px; font-weight:600; letter-spacing:.1em;
+        text-transform:uppercase; color:var(--ink-3); margin-bottom:7px; }
+      .sn-sublbl { font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:8px; }
+      .sn-note { font-size:12.5px; line-height:1.5; color:var(--ink-3); margin-top:6px; }
+      .sn-note.warn { color:var(--alert); }
+
+      /* ---------- fields: underlines, not boxes ---------- */
+      .sn-field { margin-bottom:20px; }
+      .sn-input, .sn-textarea {
+        width:100%; font-family:'Inter',sans-serif; font-size:16px; color:var(--ink);
+        background:transparent; border:none; border-bottom:1px solid var(--rule);
+        border-radius:0; padding:8px 0; outline:none; transition:border-color .15s;
+      }
+      .sn-input:focus, .sn-textarea:focus { border-bottom-color:var(--accent); border-bottom-width:1.5px; }
+      .sn-input::placeholder, .sn-textarea::placeholder { color:#B3ABA0; }
+      .sn-textarea { resize:none; min-height:52px; line-height:1.6; font-size:16px; }
+      .sn-textarea.serif { font-family:'Lora',Georgia,serif; font-size:17px; line-height:1.65; }
+      select.sn-input { appearance:none; }
+      .sn-input-date { font-family:'IBM Plex Mono',monospace; font-size:14px; padding:8px 0;
+        min-width:0; width:100%; -webkit-appearance:none; appearance:none; }
+      .sn-input-date::-webkit-date-and-time-value { text-align:left; margin:0; }
+      .sn-input-date::-webkit-calendar-picker-indicator { padding:0; margin:0; opacity:.4; width:14px; }
+      .sn-input-date::-webkit-inner-spin-button, .sn-input-date::-webkit-clear-button { display:none; }
+
+      /* ---------- buttons ---------- */
+      .sn-btn { font-family:'Inter',sans-serif; font-weight:600; font-size:15px; border-radius:var(--r);
+        border:none; padding:13px 18px; cursor:pointer; min-height:44px;
+        transition:opacity .12s, transform .1s; }
+      .sn-btn:active { transform:scale(.985); }
+      .sn-btn:disabled { opacity:.35; }
+      .sn-btn-accent { background:var(--accent); color:#fff; }
+      .sn-btn-primary { background:var(--ink); color:var(--paper); }
+      .sn-btn-ghost { background:transparent; color:var(--ink-2); border:1px solid var(--rule); }
+      .sn-btn-danger { background:transparent; color:var(--alert); border:1px solid #E4CDC5; }
       .sn-btn-full { width:100%; }
-      .sn-btn-sm { padding:7px 10px; font-size:12.5px; border-radius:7px; }
+      .sn-btn-sm { padding:9px 13px; font-size:13.5px; min-height:38px; }
+      .sn-link { background:none; border:none; color:var(--accent-deep); font-size:13px; font-weight:600;
+        cursor:pointer; padding:6px 0; font-family:'Inter',sans-serif;
+        letter-spacing:0; text-transform:none; }
 
-      .sn-field { margin-bottom:15px; }
-      .sn-label { display:block; font-size:10.5px; font-weight:700; text-transform:uppercase;
-        letter-spacing:.1em; color:var(--iris-deep); margin-bottom:6px; }
-      .sn-input, .sn-textarea { width:100%; font-family:'Figtree',sans-serif; font-size:15px; color:var(--ink);
-        background:var(--card); border:1px solid var(--line); border-radius:9px; padding:11px 12px; outline:none; }
-      .sn-input:focus, .sn-textarea:focus { border-color:var(--iris); }
-      .sn-textarea { resize:vertical; min-height:60px; line-height:1.45; }
-      .sn-input::placeholder,.sn-textarea::placeholder { color:#A3AFC4; }
-      .sn-input-date {
-        -webkit-appearance:none; appearance:none;
-        font-family:'IBM Plex Mono',monospace; font-size:13px; padding:11px 9px;
-        min-width:0; width:100%; max-width:100%; display:block; box-sizing:border-box;
-        overflow:hidden; text-overflow:clip;
-      }
-      .sn-input-date::-webkit-date-and-time-value { text-align:left; margin:0; min-width:0; padding:0; }
-      .sn-input-date::-webkit-calendar-picker-indicator { padding:0; margin:0; opacity:.5;
-        width:13px; height:13px; flex-shrink:0; }
-      .sn-input-date::-webkit-datetime-edit { padding:0; min-width:0; }
-      .sn-input-date::-webkit-datetime-edit-fields-wrapper { padding:0; }
-      .sn-input-date::-webkit-inner-spin-button,
-      .sn-input-date::-webkit-clear-button { display:none; -webkit-appearance:none; }
+      /* ---------- home ---------- */
+      .sn-greet { padding:6px 0 20px; border-bottom:1px solid var(--rule); margin-bottom:22px; }
+      .sn-greet-hi { font-family:'Lora',Georgia,serif; font-size:27px; font-weight:500;
+        letter-spacing:-.015em; line-height:1.2; }
+      .sn-greet-date { font-size:12.5px; color:var(--ink-3); margin-top:5px;
+        letter-spacing:.02em; }
 
-      .sn-chip-row { display:flex; flex-wrap:wrap; gap:6px; }
-      .sn-chip { display:inline-flex; align-items:center; gap:6px; background:var(--plum-tint);
-        color:var(--plum); border-radius:100px; padding:5px 6px 5px 11px; font-size:12.5px; font-weight:500; }
-      .sn-chip .sn-mono { font-size:11.5px; }
-      .sn-chip button { background:var(--plum); color:#fff; border:none; border-radius:50%; width:16px;
-        height:16px; font-size:10px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
-      .sn-addverse { background:var(--plum-tint); color:var(--plum); border:1px dashed var(--plum);
-        border-radius:100px; padding:5px 12px; font-size:12.5px; font-weight:600; cursor:pointer;
-        font-family:'Figtree',sans-serif; }
-      .sn-addverse.quiet { background:transparent; border-color:#C6D2E6; color:var(--ink-soft);
-        font-weight:500; padding:4px 11px; font-size:12px; }
+      /* The two things you actually came here to do */
+      .sn-startrow { display:flex; flex-direction:column; gap:1px; background:var(--rule-soft);
+        border:1px solid var(--rule); border-radius:var(--r); overflow:hidden; margin-bottom:4px; }
+      .sn-start { display:flex; align-items:center; gap:14px; background:var(--card);
+        border:none; padding:17px 16px; cursor:pointer; text-align:left;
+        font-family:'Inter',sans-serif; min-height:64px; }
+      .sn-start .ico { font-size:17px; width:26px; text-align:center; flex-shrink:0; }
+      .sn-start .nm { font-size:16px; font-weight:600; display:block; }
+      .sn-start .sub { font-size:12.5px; color:var(--ink-3); display:block; margin-top:1px; }
+      .sn-start.sermon .ico { color:var(--accent); }
+      .sn-start.devotion .ico { color:#8A6410; }
+      .sn-start:active { background:var(--accent-wash); }
 
-      /* Sermon point block */
-      .sn-point { background:var(--card); border:1px solid var(--line); border-radius:12px;
-        padding:16px 13px 13px; margin-bottom:12px; position:relative; }
-      .sn-point-num { position:absolute; top:-10px; left:12px; background:var(--ink); color:var(--sky);
-        font-size:11px; font-weight:700; width:21px; height:21px; border-radius:50%;
-        display:flex; align-items:center; justify-content:center; }
-      .sn-point-x { position:absolute; top:9px; right:10px; background:none; border:none;
-        color:var(--ink-soft); font-size:12px; font-weight:600; cursor:pointer; }
-      .sn-point-head { width:100%; font-family:'Newsreader',Georgia,serif; font-size:18px; font-weight:500;
-        border:none; border-bottom:1.5px solid var(--iris-tint); background:transparent;
-        padding:2px 0 6px; outline:none; color:var(--ink); margin-bottom:10px; }
-      .sn-point-head:focus { border-bottom-color:var(--iris); }
-      .sn-point-head::placeholder { color:#A9B4C8; font-style:italic; }
+      /* ---------- panels: framed by rules, not boxes ---------- */
+      .sn-panel { background:var(--card); border:1px solid var(--rule); border-radius:var(--r);
+        padding:16px; margin-bottom:4px; }
+      .sn-panel-hd { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        font-size:11px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:14px; }
 
-      @media (prefers-reduced-motion: reduce) {
-        .sn-row textarea { transition:none; }
-      }
+      /* reading progress: a single honest line */
+      .sn-progress-row { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+      .sn-progress-num { font-family:'Lora',Georgia,serif; color:var(--ink); flex-shrink:0; }
+      .sn-progress-num strong { font-size:32px; font-weight:500; letter-spacing:-.02em; }
+      .sn-progress-num span { font-size:15px; color:var(--ink-3); }
+      .sn-progress-meta { flex:1; min-width:0; }
+      .sn-meter { height:3px; border-radius:2px; background:var(--rule); overflow:hidden; margin-bottom:7px; }
+      .sn-meter-fill { height:100%; border-radius:2px;
+        background:linear-gradient(90deg, var(--accent) 0%, var(--ochre) 165%); }
 
-      /* Tiered list rows */
-      .sn-row { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
-      .sn-marker { font-size:13px; color:var(--iris-deep); font-weight:600; padding-top:13px;
-        min-width:20px; text-align:right; flex-shrink:0; }
-      .sn-row textarea { flex:1; font-family:'Figtree',sans-serif; font-size:14.5px; line-height:1.55;
-        border:1px solid var(--line); border-radius:9px; background:#F4F8FE; padding:9px 12px;
-        outline:none; resize:none; overflow:hidden; color:var(--ink); min-height:40px;
-        transition:height .16s ease, padding .16s ease, border-color .12s, background .12s,
-          box-shadow .12s; }
-      .sn-row textarea.open { padding:11px 12px; }
-      .sn-row textarea:focus { border-color:var(--iris); background:#fff;
-        box-shadow:0 0 0 3px rgba(109,79,176,.1); }
-      .sn-row textarea::placeholder { color:#A9B4C8; }
-      .sn-rowtools { display:flex; gap:3px; padding-top:10px; flex-shrink:0; }
-      .sn-rowtools button { width:24px; height:24px; border-radius:6px; border:1px solid var(--line);
-        background:var(--card); color:var(--ink-soft); font-size:12px; cursor:pointer;
+      .sn-today-lbl { font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:5px; }
+      .sn-today { font-family:'Lora',Georgia,serif; font-size:19px; font-weight:500;
+        line-height:1.35; margin-bottom:14px; }
+      .sn-today-actions { display:flex; gap:9px; }
+      .sn-partial { font-family:'Inter',sans-serif; font-size:12.5px; color:var(--ink-3); font-weight:400; }
+
+      .sn-pace { font-size:12.5px; line-height:1.5; padding:9px 0; margin-bottom:12px;
+        border-top:1px solid var(--rule-soft); border-bottom:1px solid var(--rule-soft); }
+      .sn-pace.ok { color:var(--good); }
+      .sn-pace.behind { color:#8A6410; }
+
+      .sn-scopegrid { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
+      .sn-scopeopt { padding:11px 9px; border-radius:var(--r); border:1px solid var(--rule);
+        background:transparent; color:var(--ink-2); font-family:'Inter',sans-serif;
+        font-size:13.5px; font-weight:500; cursor:pointer; min-height:42px; }
+      .sn-scopeopt.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+      .sn-paceopts { display:flex; flex-direction:column; gap:7px; }
+      .sn-paceopt { text-align:left; padding:12px 13px; border-radius:var(--r);
+        border:1px solid var(--rule); background:transparent; cursor:pointer; font-family:'Inter',sans-serif; }
+      .sn-paceopt .nm { font-size:14.5px; font-weight:600; color:var(--ink); }
+      .sn-paceopt .bl { font-size:12.5px; color:var(--ink-3); margin-top:2px; line-height:1.4; }
+      .sn-paceopt.on { border-color:var(--accent); background:var(--accent-wash); }
+      .sn-dayopts { display:flex; gap:7px; }
+      .sn-dayopt { flex:1; padding:10px 0; border-radius:var(--r); border:1px solid var(--rule);
+        background:transparent; font-family:'IBM Plex Mono',monospace; font-size:13px;
+        font-weight:600; color:var(--ink-2); cursor:pointer; min-height:40px; }
+      .sn-dayopt.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+      .sn-planopt { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        width:100%; text-align:left; background:transparent; border:none;
+        border-bottom:1px solid var(--rule-soft); padding:13px 0; cursor:pointer;
+        font-family:'Inter',sans-serif; }
+      .sn-planopt .nm { font-size:14.5px; font-weight:600; }
+      .sn-planopt .bl { font-size:12px; color:var(--ink-3); margin-top:2px; }
+      .sn-planopt .ct { font-size:12px; font-weight:600; color:var(--ink-3); flex-shrink:0; }
+
+      .sn-loglist { margin-top:14px; border-top:1px solid var(--rule-soft); padding-top:4px; }
+      .sn-logrow { display:flex; align-items:center; justify-content:space-between;
+        font-size:13px; padding:7px 0; }
+      .sn-logrow .dt { font-size:11.5px; color:var(--ink-3); }
+
+      /* ---------- topic shortcuts: the heart of the thing ---------- */
+      .sn-topicrow { display:flex; flex-wrap:wrap; gap:7px; }
+      .sn-topicpill { display:inline-flex; align-items:center; gap:7px; background:var(--card);
+        border:1px solid var(--rule); color:var(--ink); border-radius:100px;
+        padding:9px 15px; font-family:'Inter',sans-serif; font-size:14px; font-weight:500;
+        text-transform:capitalize; cursor:pointer; min-height:40px; }
+      .sn-topicpill .ct { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-3); }
+      .sn-topicpill.hot { border-color:var(--accent); color:var(--accent-deep); font-weight:600; }
+      .sn-topicpill.hot .ct { color:var(--accent); }
+      .sn-topicpill:active { background:var(--accent-wash); }
+      .sn-topicpill.all { border-style:dashed; color:var(--ink-3); text-transform:none; }
+
+      /* ---------- resurfaced verse: set like a pull quote ---------- */
+      .sn-resurface { border-left:2px solid var(--ochre); padding:2px 0 2px 15px;
+        cursor:pointer; margin:2px 0 6px; }
+      .sn-resurface-ref { font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8A6410;
+        font-weight:600; letter-spacing:.02em; margin-bottom:7px; }
+      .sn-resurface-gist { font-family:'Lora',Georgia,serif; font-size:18px; line-height:1.55;
+        color:var(--ink); font-style:italic; }
+      .sn-resurface-ft { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:10px; }
+      .sn-resurface-ft .ago { margin-left:auto; font-size:11.5px; color:var(--ink-3); }
+
+      /* ---------- lists of entries ---------- */
+      .sn-card { background:transparent; border:none; border-bottom:1px solid var(--rule);
+        border-radius:0; padding:15px 0; margin:0; position:relative; cursor:pointer; }
+      .sn-card:active { background:var(--accent-wash); }
+      .sn-ribbon { display:none; }
+      .sn-card h3 { margin:0 0 4px; font-family:'Lora',Georgia,serif; font-size:18px;
+        font-weight:500; letter-spacing:-.01em; line-height:1.3; padding-right:0; }
+      .sn-card .meta { font-size:12px; color:var(--ink-3); margin-bottom:6px; letter-spacing:.01em; }
+      .sn-card .snip { font-size:14px; color:var(--ink-2); line-height:1.5; }
+
+      .sn-kind { display:inline-block; font-size:10px; font-weight:600; letter-spacing:.13em;
+        text-transform:uppercase; border-radius:0; padding:0; margin-bottom:5px; background:none; }
+      .sn-kind-sermon { color:var(--accent); }
+      .sn-kind-devotion { color:#8A6410; }
+
+      .sn-recent { display:flex; align-items:center; gap:11px; background:transparent;
+        border:none; border-bottom:1px solid var(--rule-soft); border-radius:0;
+        padding:13px 0; margin:0; cursor:pointer; font-size:14.5px; min-height:48px; }
+      .sn-recent .ttl { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .sn-recent .dt { font-size:11.5px; color:var(--ink-3); flex-shrink:0; }
+      .sn-dotkind { width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+      .sn-dotkind.ser { background:var(--accent); }
+      .sn-dotkind.dev { background:var(--ochre); }
+
+      /* ---------- sermon points ---------- */
+      .sn-point { background:var(--card); border:1px solid var(--rule); border-radius:var(--r);
+        padding:18px 14px 14px; margin-bottom:12px; position:relative; }
+      .sn-point-num { position:absolute; top:-9px; left:14px; background:var(--paper);
+        color:var(--ink-3); font-size:10px; font-weight:600; letter-spacing:.13em;
+        padding:0 7px; border-radius:0; width:auto; height:auto; display:block; }
+      .sn-point-x { position:absolute; top:12px; right:12px; background:none; border:none;
+        color:var(--ink-3); font-size:12px; font-weight:500; cursor:pointer; padding:4px; }
+      .sn-point-head { width:100%; font-family:'Lora',Georgia,serif; font-size:18px; font-weight:500;
+        border:none; border-bottom:1px solid var(--rule); background:transparent;
+        padding:4px 0 9px; outline:none; color:var(--ink); margin-bottom:14px; }
+      .sn-point-head:focus { border-bottom-color:var(--accent); }
+      .sn-point-head::placeholder { color:#B3ABA0; font-style:italic; }
+
+      .sn-row { display:flex; align-items:flex-start; gap:8px; margin-bottom:6px; }
+      .sn-marker { font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-3);
+        font-weight:600; padding:11px 0 0; min-width:18px; text-align:right; flex-shrink:0;
+        background:none; border:none; cursor:pointer; }
+      .sn-row textarea { flex:1; font-family:'Inter',sans-serif; font-size:15.5px; line-height:1.55;
+        border:none; border-bottom:1px solid transparent; border-radius:0; background:transparent;
+        padding:8px 0; outline:none; resize:none; overflow:hidden; color:var(--ink);
+        min-height:38px; transition:border-color .15s, height .16s ease; }
+      .sn-row textarea:focus { border-bottom-color:var(--accent); background:transparent; box-shadow:none; }
+      .sn-row textarea.open { padding:8px 0 10px; }
+      .sn-row textarea::placeholder { color:#B3ABA0; }
+      .sn-rowtools { display:flex; gap:2px; padding-top:8px; flex-shrink:0; }
+      .sn-rowtools button { width:26px; height:26px; border-radius:6px; border:none;
+        background:transparent; color:var(--ink-3); font-size:12px; cursor:pointer;
         display:flex; align-items:center; justify-content:center; padding:0; }
-      .sn-rowtools button:disabled { opacity:.3; }
+      .sn-rowtools button:active { background:var(--rule-soft); }
+      .sn-rowtools button:disabled { opacity:.25; }
 
-      .sn-styleseg { display:flex; gap:4px; margin:2px 0 10px; }
-      .sn-styleseg button { flex:1; font-size:11px; font-weight:600; padding:6px 0; border-radius:7px;
-        border:1px solid var(--line); background:var(--card); color:var(--ink-soft); cursor:pointer; }
-      .sn-styleseg button.on { background:var(--iris-tint); border-color:var(--iris); color:var(--iris-deep); }
+      /* the V key: small, always in the same place */
+      .sn-vbtn { flex-shrink:0; width:26px; height:26px; margin-top:8px; border-radius:6px;
+        border:1px solid var(--rule); background:transparent; color:var(--ink-3);
+        font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; cursor:pointer;
+        display:flex; align-items:center; justify-content:center; padding:0; line-height:1; }
+      .sn-vbtn sup { font-size:8px; }
+      .sn-vbtn.has { background:var(--ochre-wash); border-color:var(--ochre); color:#8A6410; }
 
-      /* Nav */
-      .sn-nav { position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:480px;
-        background:var(--card); border-top:1px solid var(--line); display:flex;
-        padding:7px 10px calc(7px + env(safe-area-inset-bottom)); box-shadow:0 -6px 20px rgba(81,60,136,.08); z-index:20; }
-      .sn-nav-btn { flex:1; background:none; border:none; cursor:pointer; display:flex; flex-direction:column;
-        align-items:center; gap:3px; padding:6px 0; border-radius:10px; color:var(--ink-soft);
-        font-family:'Figtree',sans-serif; font-size:11px; font-weight:600; }
-      .sn-nav-btn.on { color:var(--iris-deep); background:var(--iris-tint); }
-      .sn-nav-ico { font-size:17px; line-height:1; }
+      .sn-stylemenu { background:var(--card); border:1px solid var(--rule); border-radius:var(--r);
+        padding:13px; margin:2px 0 12px 26px; box-shadow:0 8px 24px rgba(25,23,19,.09); }
+      .sn-stylemenu-hd { font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:9px; }
+      .sn-stylemenu-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
+      .sn-stylemenu-grid button { display:flex; align-items:center; gap:9px; padding:11px 11px;
+        border-radius:var(--r); border:1px solid var(--rule); background:transparent; cursor:pointer;
+        font-family:'Inter',sans-serif; font-size:13.5px; font-weight:500; color:var(--ink);
+        min-height:42px; }
+      .sn-stylemenu-grid button.on { border-color:var(--accent); background:var(--accent-wash);
+        color:var(--accent-deep); font-weight:600; }
+      .sn-stylemenu-grid .pv { font-family:'IBM Plex Mono',monospace; font-size:12px;
+        color:var(--ink-3); min-width:15px; }
 
-      /* Cards */
-      .sn-card { background:var(--card); border:1px solid var(--line); border-radius:13px;
-        padding:15px 15px 13px; margin-bottom:11px; position:relative; cursor:pointer; }
-      .sn-ribbon { position:absolute; top:-1px; right:17px; width:15px; height:25px; background:var(--iris);
-        clip-path:polygon(0 0,100% 0,100% 100%,50% 78%,0 100%); }
-      .sn-card h3 { margin:0 0 4px; font-size:18px; font-weight:500; padding-right:26px;
-        font-family:'Newsreader',Georgia,serif; letter-spacing:-.01em; }
-      .sn-card .meta { font-size:12px; color:var(--ink-soft); margin-bottom:7px; }
-      .sn-card .snip { font-size:13px; opacity:.8; line-height:1.4; }
-
-      .sn-empty { text-align:center; padding:48px 20px; color:var(--ink-soft); font-size:14px; }
-      .sn-empty .ico { font-size:28px; margin-bottom:9px; }
-      .sn-secttl { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
-        color:var(--iris-deep); margin:20px 0 9px; }
-
-      .sn-dtl { margin-bottom:17px; }
-      .sn-dtl-lbl { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
-        color:var(--iris-deep); margin-bottom:5px; }
-      .sn-dtl-txt { font-size:15px; line-height:1.65; white-space:pre-wrap; }
-      .sn-back { background:none; border:none; color:var(--ink-soft); font-size:14px; font-weight:600;
-        cursor:pointer; padding:2px 0 12px; }
-
-      .sn-toast { position:fixed; bottom:96px; left:50%; transform:translateX(-50%); background:var(--ink);
-        color:var(--sky); font-size:13px; font-weight:500; padding:9px 16px; border-radius:100px; z-index:60; }
-
-      /* Picker modal */
-      .sn-overlay { position:fixed; inset:0; background:rgba(35,39,70,.42); z-index:100;
-        display:flex; align-items:flex-end; justify-content:center; }
-      .sn-sheet { background:var(--sky); width:100%; max-width:480px; border-radius:18px 18px 0 0;
-        max-height:88vh; display:flex; flex-direction:column; overflow:hidden; }
-      .sn-sheet-hd { padding:14px 16px 10px; border-bottom:1px solid var(--line); display:flex;
-        align-items:center; justify-content:space-between; background:var(--card); }
-      .sn-sheet-hd h3 { margin:0; font-size:16px; font-weight:600; font-family:'Newsreader',Georgia,serif; }
-      .sn-crumb { font-size:12px; color:var(--ink-soft); margin-top:2px; }
-      .sn-sheet-body { overflow-y:auto; padding:12px 14px 20px; -webkit-overflow-scrolling:touch; }
-      .sn-x { background:none; border:none; font-size:20px; color:var(--ink-soft); cursor:pointer; line-height:1; }
-
-      .sn-tseg { display:flex; gap:6px; margin-bottom:12px; }
-      .sn-tseg button { flex:1; padding:8px 0; font-size:12.5px; font-weight:600; border-radius:8px;
-        border:1px solid var(--line); background:var(--card); color:var(--ink-soft); cursor:pointer; }
-      .sn-tseg button.on { background:var(--ink); border-color:var(--ink); color:var(--sky); }
-
-      .sn-booklist { display:flex; flex-direction:column; }
-      .sn-bookrow { display:flex; align-items:center; gap:10px; padding:11px 10px; border-radius:9px;
-        cursor:pointer; border-bottom:1px solid var(--line); }
-      .sn-bookrow:active { background:var(--iris-tint); }
-      .sn-bookrow .nm { font-size:14.5px; font-weight:500; }
-      .sn-bookrow .ct { margin-left:auto; font-size:11px; color:var(--ink-soft); }
-
-      .sn-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
-      .sn-grid.verses { grid-template-columns:repeat(6,1fr); }
-      .sn-cell { aspect-ratio:1; border-radius:9px; border:1px solid var(--line); background:var(--card);
-        font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; color:var(--ink);
-        display:flex; align-items:center; justify-content:center; cursor:pointer; }
-      .sn-cell:active { background:var(--iris-tint); }
-      .sn-cell.sel { background:var(--iris); border-color:var(--iris); color:#fff; }
-      .sn-cell.inrange { background:var(--iris-tint); border-color:var(--iris); color:var(--iris-deep); }
-
-      .sn-sheet-ft { padding:11px 14px calc(11px + env(safe-area-inset-bottom)); border-top:1px solid var(--line);
-        background:var(--card); display:flex; gap:9px; align-items:center; }
-      .sn-hint { font-size:12px; color:var(--ink-soft); flex:1; }
-
-      .sn-chip.has-gist { border:1px solid var(--plum); }
-      .sn-dot { width:5px; height:5px; border-radius:50%; background:var(--plum); flex-shrink:0; }
-      .sn-gistbox { background:#F4F8FE; border-left:3px solid var(--plum); border-radius:0 9px 9px 0;
-        padding:9px 11px; margin-top:8px; }
-      .sn-gist-ref { font-size:11.5px; color:var(--plum); font-weight:600; margin-bottom:6px; }
-      .sn-gist-read { font-size:15px; line-height:1.65; font-family:'Newsreader',Georgia,serif;
-        margin-bottom:5px; color:var(--ink); }
-      .sn-loadtext { background:none; border:none; color:var(--ink-soft); font-size:11.5px; font-weight:600;
-        cursor:pointer; padding:4px 0 0; font-family:'Figtree',sans-serif; }
-
-      /* Topics */
-      .sn-topicbox { margin-top:10px; }
-      .sn-topic-lbl { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
-        color:var(--iris-deep); margin-bottom:6px; }
-      .sn-topic { display:inline-flex; align-items:center; gap:5px; background:var(--iris-tint);
-        color:var(--iris-deep); border:none; border-radius:100px; padding:5px 6px 5px 11px;
-        font-size:12.5px; font-weight:600; font-family:'Figtree',sans-serif; }
-      .sn-topic button { background:var(--iris); color:#fff; border:none; border-radius:50%;
-        width:15px; height:15px; font-size:9px; line-height:1; cursor:pointer;
+      /* ---------- scripture: ochre rule, serif, never a button ---------- */
+      .sn-chip-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+      .sn-chip { display:inline-flex; align-items:center; gap:6px; background:var(--ochre-wash);
+        color:var(--ink); border-radius:100px; padding:5px 7px 5px 11px;
+        font-size:12.5px; font-weight:500; }
+      .sn-chip .sn-mono { color:var(--ink); }
+      .sn-chip .sn-mono { font-size:12px; letter-spacing:-.01em; }
+      .sn-chip button { background:none; color:#8A6410; border:none; border-radius:50%;
+        width:17px; height:17px; font-size:13px; line-height:1; cursor:pointer;
         display:flex; align-items:center; justify-content:center; }
-      .sn-topic.ghost { background:transparent; border:1px dashed var(--iris); color:var(--iris);
-        padding:5px 11px; cursor:pointer; font-weight:500; }
-      .sn-topic-input { font-size:14px; padding:9px 11px; margin-top:8px; }
+      .sn-chip.has-gist { box-shadow:inset 2px 0 0 var(--ochre); }
+      .sn-dot { display:none; }
+      .sn-addverse { background:transparent; color:var(--accent); border:1px dashed var(--rule);
+        border-radius:100px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;
+        font-family:'Inter',sans-serif; min-height:32px; }
+      .sn-addverse.quiet { color:var(--ink-3); font-weight:500; }
 
-      .sn-topic-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:9px; }
+      .sn-gistbox { background:transparent; border-left:2px solid var(--ochre); border-radius:0;
+        padding:2px 0 2px 13px; margin-top:10px; }
+      .sn-gist-ref { font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#8A6410;
+        font-weight:600; margin-bottom:6px; }
+      .sn-gist-read { font-family:'Lora',Georgia,serif; font-size:16px; line-height:1.6;
+        color:var(--ink); margin-bottom:6px; }
+      .sn-loadtext { background:none; border:none; color:var(--ink-3); font-size:12px; font-weight:600;
+        cursor:pointer; padding:6px 0 0; font-family:'Inter',sans-serif; }
+
+      /* ---------- topics ---------- */
+      .sn-topicbox { margin-top:14px; padding-top:12px; border-top:1px solid var(--rule-soft); }
+      .sn-topic-lbl { font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:8px; }
+      .sn-topic { display:inline-flex; align-items:center; gap:6px; background:var(--accent-wash);
+        color:var(--accent-deep); border:none; border-radius:100px; padding:6px 7px 6px 12px;
+        font-size:13px; font-weight:500; font-family:'Inter',sans-serif; }
+      .sn-topic button { background:none; color:var(--accent); border:none; width:16px; height:16px;
+        font-size:13px; line-height:1; cursor:pointer; display:flex; align-items:center;
+        justify-content:center; }
+      .sn-topic.ghost { background:transparent; border:1px solid var(--rule); color:var(--ink-2);
+        padding:6px 12px; cursor:pointer; min-height:32px; }
+      .sn-topic.ghost.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+      .sn-topic.mini { font-size:11.5px; padding:4px 10px; }
+      .sn-topic-input { font-size:15px; padding:8px 0; margin-top:10px; }
+      .sn-topic-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
       .sn-topic-card { display:flex; align-items:center; justify-content:space-between; gap:8px;
-        background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 13px;
-        cursor:pointer; font-family:'Figtree',sans-serif; text-align:left; }
-      .sn-topic-card .name { font-size:14.5px; font-weight:600; color:var(--ink);
+        background:var(--card); border:1px solid var(--rule); border-radius:var(--r);
+        padding:15px 13px; cursor:pointer; font-family:'Inter',sans-serif; text-align:left;
+        min-height:56px; }
+      .sn-topic-card .name { font-size:15px; font-weight:500; color:var(--ink);
         text-transform:capitalize; overflow:hidden; text-overflow:ellipsis; }
-      .sn-topic-card .count { background:var(--iris-tint); color:var(--iris-deep); font-weight:700;
-        font-size:11.5px; border-radius:100px; padding:2px 8px; flex-shrink:0; }
-
+      .sn-topic-card .count { font-family:'IBM Plex Mono',monospace; font-size:12px;
+        color:var(--ink-3); flex-shrink:0; }
       .sn-topic-hd { display:flex; align-items:center; justify-content:space-between; gap:10px;
-        margin-bottom:13px; }
-      .sn-topic-title { font-family:'Newsreader',Georgia,serif; font-size:21px; font-weight:500;
-        text-transform:capitalize; color:var(--iris-deep); }
+        margin-bottom:16px; }
+      .sn-topic-title { font-family:'Lora',Georgia,serif; font-size:24px; font-weight:500;
+        text-transform:capitalize; }
 
-      /* Devotions, library kinds, data panel */
-      .sn-header-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-      .sn-datahtn { background:none; border:1px solid transparent; border-radius:8px; font-size:19px;
-        line-height:1; color:var(--ink-soft); cursor:pointer; padding:4px 10px; letter-spacing:.06em; }
-      .sn-datahtn.on { background:var(--iris-tint); border-color:var(--iris); color:var(--iris-deep); }
+      /* ---------- verse index ---------- */
+      .sn-freq { display:flex; align-items:center; justify-content:space-between;
+        background:transparent; border:none; border-bottom:1px solid var(--rule-soft);
+        border-radius:0; padding:13px 0; margin:0; cursor:pointer; min-height:48px; }
+      .sn-freq-ct { font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-3);
+        background:none; border-radius:0; padding:0; font-weight:500; }
+      .sn-srcrow { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-2);
+        padding:7px 0 7px 2px; cursor:pointer; }
+      .sn-srcdate { margin-left:auto; font-size:11.5px; color:var(--ink-3); }
+      .sn-tseg { display:flex; gap:0; margin-bottom:18px; border-bottom:1px solid var(--rule); }
+      .sn-tseg button { flex:1; padding:11px 0 10px; font-size:14px; font-weight:500;
+        border:none; border-bottom:2px solid transparent; background:none; color:var(--ink-3);
+        cursor:pointer; margin-bottom:-1px; font-family:'Inter',sans-serif; }
+      .sn-tseg button.on { color:var(--ink); font-weight:600; border-bottom-color:var(--accent); }
 
-      .sn-kind { display:inline-block; font-size:9.5px; font-weight:700; text-transform:uppercase;
-        letter-spacing:.11em; border-radius:100px; padding:3px 8px; margin-bottom:6px; }
-      .sn-kind-sermon { background:var(--iris-tint); color:var(--iris-deep); }
-      .sn-kind-devotion { background:var(--plum-tint); color:var(--plum); }
-      .sn-card.devotion .sn-ribbon { background:var(--plum); }
+      /* ---------- detail ---------- */
+      .sn-dtl { margin-bottom:24px; }
+      .sn-dtl-lbl { font-size:11px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:8px; }
+      .sn-dtl-txt { font-size:16px; line-height:1.65; white-space:pre-wrap; color:var(--ink); }
+      .sn-back { background:none; border:none; color:var(--ink-3); font-size:14px; font-weight:500;
+        cursor:pointer; padding:4px 0 16px; font-family:'Inter',sans-serif; }
+      .sn-hl { background-image:linear-gradient(transparent 55%, var(--ochre-wash) 55%);
+        padding:0 2px; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
+      .sn-stepno { display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:10px;
+        color:#8A6410; margin-right:7px; background:none; width:auto; height:auto;
+        border-radius:0; letter-spacing:0; }
 
-      .sn-topic.ghost.on { background:var(--plum-tint); border-style:solid; border-color:var(--plum);
-        color:var(--plum); font-weight:600; }
+      /* ---------- devotion methods ---------- */
+      .sn-methods { display:flex; gap:0; border-bottom:1px solid var(--rule); }
+      .sn-method { flex:1; padding:10px 4px 9px; font-size:13px; font-weight:500;
+        border:none; border-bottom:2px solid transparent; background:none; color:var(--ink-3);
+        cursor:pointer; margin-bottom:-1px; font-family:'Inter',sans-serif; letter-spacing:.01em; }
+      .sn-method.on { color:var(--ink); font-weight:600; border-bottom-color:var(--ochre); }
 
-      .sn-srcrow { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-soft);
-        padding:4px 0; cursor:pointer; }
-      .sn-dotkind { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-      .sn-dotkind.ser { background:var(--iris); }
-      .sn-dotkind.dev { background:var(--plum); }
-      .sn-srcdate { margin-left:auto; font-size:11px; opacity:.75; }
-
-      .sn-confirm { background:var(--card); border:1px solid var(--iris); border-radius:12px;
-        padding:13px; margin-top:11px; }
-      .sn-confirm-hd { font-size:14px; font-weight:600; margin-bottom:6px; }
-      .sn-statrow { display:flex; align-items:center; justify-content:space-between;
-        background:var(--card); border:1px solid var(--line); border-radius:10px;
-        padding:11px 13px; margin-bottom:8px; font-size:13.5px; }
-      .sn-pill { font-size:11.5px; font-weight:700; border-radius:100px; padding:3px 9px;
-        background:var(--iris-tint); color:var(--iris-deep); }
-      .sn-pill.good { background:#DCEBDF; color:#33603D; }
-      .sn-pill.warn { background:var(--plum-tint); color:var(--plum); }
-      .sn-meter { height:6px; border-radius:100px; background:var(--line); overflow:hidden; margin-bottom:6px; }
-      .sn-meter-fill { height:100%; background:var(--iris); border-radius:100px; }
-
-      /* Photos */
+      /* ---------- photos ---------- */
       .sn-strip { display:flex; gap:8px; flex-wrap:wrap; }
-      .sn-thumb { width:72px; height:72px; border-radius:10px; overflow:hidden; padding:0;
-        border:1px solid var(--line); background:var(--card); cursor:pointer; flex-shrink:0;
+      .sn-thumb { width:64px; height:64px; border-radius:var(--r); overflow:hidden; padding:0;
+        border:1px solid var(--rule); background:var(--card); cursor:pointer; flex-shrink:0;
         display:flex; align-items:center; justify-content:center; }
       .sn-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
-      .sn-thumb-ph { color:var(--ink-soft); font-size:16px; }
-      .sn-thumb.add { flex-direction:column; gap:3px; border-style:dashed; border-color:var(--iris);
-        color:var(--iris-deep); font-family:'Figtree',sans-serif; }
-      .sn-thumb.add .ico { font-size:18px; line-height:1; }
-      .sn-thumb.add .lbl { font-size:10.5px; font-weight:600; }
-      .sn-thumb.add:disabled { opacity:.55; }
+      .sn-thumb-ph { color:var(--ink-3); font-size:15px; }
+      .sn-thumb.add { flex-direction:column; gap:2px; border-style:dashed; color:var(--ink-3); }
+      .sn-thumb.add .ico { font-size:16px; line-height:1; }
+      .sn-thumb.add .lbl { font-size:10px; font-weight:600; }
+      .sn-photo-sheet { background:var(--paper); width:100%; max-width:480px;
+        border-radius:14px 14px 0 0; max-height:92vh; display:flex; flex-direction:column; overflow:hidden; }
+      .sn-photo-body { flex:1; overflow:auto; padding:14px; display:flex; align-items:center;
+        justify-content:center; background:#E9E4DA; }
+      .sn-photo-body img { max-width:100%; max-height:64vh; border-radius:4px; display:block;
+        box-shadow:0 8px 28px rgba(25,23,19,.18); }
 
-      .sn-photo-sheet { background:var(--sky); width:100%; max-width:480px; border-radius:18px 18px 0 0;
-        max-height:92vh; display:flex; flex-direction:column; overflow:hidden; }
-      .sn-photo-body { flex:1; overflow:auto; padding:12px; display:flex; align-items:center;
-        justify-content:center; background:#DCE6F5; }
-      .sn-photo-body img { max-width:100%; max-height:64vh; border-radius:8px; display:block;
-        box-shadow:0 6px 20px rgba(81,60,136,.18); }
+      /* ---------- verse picker sheet ---------- */
+      .sn-overlay { position:fixed; inset:0; background:rgba(25,23,19,.42); z-index:100;
+        display:flex; align-items:flex-end; justify-content:center; }
+      .sn-sheet { background:var(--paper); width:100%; max-width:480px; border-radius:14px 14px 0 0;
+        max-height:88vh; display:flex; flex-direction:column; overflow:hidden; }
+      .sn-sheet-hd { padding:16px 18px 13px; border-bottom:1px solid var(--rule); display:flex;
+        align-items:center; justify-content:space-between; background:var(--paper); }
+      .sn-sheet-hd h3 { margin:0; font-family:'Lora',Georgia,serif; font-size:18px; font-weight:500; }
+      .sn-crumb { font-size:12.5px; color:var(--ink-3); margin-top:3px; }
+      .sn-sheet-body { overflow-y:auto; padding:14px 16px 22px; -webkit-overflow-scrolling:touch; }
+      .sn-x { background:none; border:none; font-size:24px; color:var(--ink-3); cursor:pointer;
+        line-height:1; padding:4px 8px; margin:-4px -8px -4px 0; }
+      .sn-booklist { display:flex; flex-direction:column; }
+      .sn-bookrow { display:flex; align-items:center; gap:10px; padding:14px 2px; cursor:pointer;
+        border-bottom:1px solid var(--rule-soft); min-height:50px; }
+      .sn-bookrow:active { background:var(--accent-wash); }
+      .sn-bookrow .nm { font-size:16px; font-weight:400; }
+      .sn-bookrow .ct { margin-left:auto; font-family:'IBM Plex Mono',monospace;
+        font-size:11.5px; color:var(--ink-3); }
+      .sn-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
+      .sn-grid.verses { grid-template-columns:repeat(6,1fr); }
+      .sn-cell { aspect-ratio:1; border-radius:var(--r); border:1px solid var(--rule);
+        background:var(--card); font-family:'IBM Plex Mono',monospace; font-size:13.5px;
+        font-weight:500; color:var(--ink); display:flex; align-items:center;
+        justify-content:center; cursor:pointer; }
+      .sn-cell:active { background:var(--accent-wash); }
+      .sn-cell.sel { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+      .sn-cell.inrange { background:var(--accent-wash); border-color:#C4D4EE; color:var(--accent-deep); }
+      .sn-sheet-ft { padding:13px 16px calc(13px + env(safe-area-inset-bottom));
+        border-top:1px solid var(--rule); background:var(--paper); display:flex; gap:10px;
+        align-items:center; }
+      .sn-hint { font-size:12.5px; color:var(--ink-3); flex:1; }
 
-      /* Devotion methods */
-      .sn-methods { display:flex; gap:5px; flex-wrap:wrap; }
-      .sn-method { flex:1 1 auto; min-width:56px; padding:9px 6px; font-size:12.5px; font-weight:700;
-        letter-spacing:.02em; border-radius:9px; border:1px solid var(--line); background:var(--card);
-        color:var(--ink-soft); cursor:pointer; font-family:'Figtree',sans-serif; }
-      .sn-method.on { background:var(--plum); border-color:var(--plum); color:#fff; }
-      .sn-stepno { display:inline-flex; align-items:center; justify-content:center;
-        width:15px; height:15px; border-radius:50%; background:var(--plum); color:#fff;
-        font-size:9px; font-weight:700; margin-right:6px; vertical-align:middle; letter-spacing:0; }
-      .sn-textarea.serif { font-family:'Newsreader',Georgia,serif; font-size:15.5px; line-height:1.6; }
+      /* ---------- drawer ---------- */
+      .sn-scrim { position:fixed; inset:0; background:rgba(25,23,19,.38); z-index:80;
+        opacity:0; pointer-events:none; transition:opacity .2s; }
+      .sn-scrim.on { opacity:1; pointer-events:auto; }
+      .sn-drawer { position:fixed; top:0; left:0; bottom:0; width:262px; max-width:82vw; z-index:90;
+        background:var(--paper); border-right:1px solid var(--rule);
+        transform:translateX(-100%); transition:transform .24s cubic-bezier(.32,.72,0,1);
+        padding:18px 12px calc(18px + env(safe-area-inset-bottom));
+        display:flex; flex-direction:column; gap:1px; }
+      .sn-drawer.on { transform:translateX(0); box-shadow:0 0 40px rgba(25,23,19,.14); }
+      .sn-drawer-hd { display:flex; align-items:center; justify-content:space-between;
+        padding:4px 8px 18px; border-bottom:1px solid var(--rule); margin-bottom:10px; }
+      .sn-drawer-hd .sn-brand { font-family:'Lora',Georgia,serif; font-size:19px; font-weight:600; }
+      .sn-drawer-item { display:flex; align-items:center; gap:13px; width:100%; text-align:left;
+        background:none; border:none; border-radius:var(--r); padding:13px 12px; cursor:pointer;
+        font-family:'Inter',sans-serif; font-size:15px; font-weight:500; color:var(--ink);
+        min-height:48px; }
+      .sn-drawer-item.on { background:var(--accent-wash); color:var(--accent-deep); font-weight:600; }
+      .sn-drawer-item .ico { font-size:15px; width:19px; text-align:center; color:var(--ink-3); }
+      .sn-drawer-item.on .ico { color:var(--accent); }
+      .sn-drawer-item .ct { margin-left:auto; font-family:'IBM Plex Mono',monospace;
+        font-size:11.5px; color:var(--ink-3); }
 
-      /* Draft status */
-      .sn-draftbar { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft);
-        padding:9px 2px 2px; }
-      .sn-draftbar.restored { background:var(--iris-tint); border:1px solid var(--iris);
-        color:var(--iris-deep); border-radius:10px; padding:10px 12px; font-size:12.5px;
-        font-weight:500; margin-bottom:14px; justify-content:space-between; }
-      .sn-draftbar.restored button { background:none; border:none; color:var(--iris-deep);
-        font-family:'Figtree',sans-serif; font-size:12.5px; font-weight:700; text-decoration:underline;
-        cursor:pointer; padding:0; flex-shrink:0; }
-      .sn-dotsave { width:6px; height:6px; border-radius:50%; background:var(--line); flex-shrink:0;
+      /* ---------- misc ---------- */
+      .sn-empty { text-align:center; padding:56px 20px; color:var(--ink-3); font-size:14.5px;
+        line-height:1.6; }
+      .sn-empty .ico { font-size:24px; margin-bottom:12px; opacity:.5; }
+      .sn-toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+        background:var(--ink); color:var(--paper); font-size:13.5px; font-weight:500;
+        padding:11px 18px; border-radius:100px; z-index:60; box-shadow:0 6px 20px rgba(25,23,19,.2); }
+      .sn-statrow { display:flex; align-items:center; justify-content:space-between;
+        background:transparent; border:none; border-bottom:1px solid var(--rule-soft);
+        border-radius:0; padding:13px 0; margin:0; font-size:14.5px; }
+      .sn-pill { font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500;
+        border-radius:0; padding:0; background:none; color:var(--ink-3); }
+      .sn-pill.good { color:var(--good); }
+      .sn-pill.warn { color:#8A6410; }
+      .sn-confirm { border:1px solid var(--accent); border-radius:var(--r); padding:15px;
+        margin-top:14px; background:var(--accent-wash); }
+      .sn-confirm-hd { font-size:15px; font-weight:600; margin-bottom:7px; }
+      .sn-testres { font-size:13px; line-height:1.5; border-radius:var(--r); padding:11px 13px;
+        margin-bottom:8px; }
+      .sn-testres.ok { background:transparent; color:var(--good); border:1px solid #C9DCD1; }
+      .sn-testres.bad { background:transparent; color:var(--alert); border:1px solid #E4CDC5; }
+      .sn-check { display:flex; align-items:flex-start; gap:10px; font-size:14.5px; line-height:1.45;
+        padding:4px 0; cursor:pointer; }
+      .sn-check input { margin-top:3px; accent-color:var(--accent); }
+      .sn-callout { border-left:2px solid var(--accent); padding:2px 0 2px 14px; font-size:13.5px;
+        line-height:1.55; color:var(--ink-2); margin-bottom:22px; }
+
+      .sn-draftbar { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-3);
+        padding:12px 0 2px; }
+      .sn-draftbar.restored { border:none; border-left:2px solid var(--accent); background:transparent;
+        color:var(--ink-2); border-radius:0; padding:2px 0 2px 14px; font-size:13.5px;
+        margin-bottom:20px; justify-content:space-between; }
+      .sn-draftbar.restored button { background:none; border:none; color:var(--accent);
+        font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer;
+        padding:0; flex-shrink:0; text-decoration:none; }
+      .sn-dotsave { width:5px; height:5px; border-radius:50%; background:var(--rule); flex-shrink:0;
         transition:background .2s; }
-      .sn-dotsave.on { background:#4E8A5C; }
+      .sn-dotsave.on { background:var(--good); }
+      .sn-streak { font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#8A6410;
+        background:none; border-radius:0; padding:0; font-weight:500; }
 
-      .sn-freq { display:flex; align-items:center; justify-content:space-between; background:var(--card);
-        border:1px solid var(--line); border-radius:10px; padding:11px 13px; margin-bottom:8px; cursor:pointer; }
-      .sn-freq-ct { background:var(--iris-tint); color:var(--iris-deep); font-weight:700; font-size:11.5px;
-        border-radius:100px; padding:2px 9px; }
+      @media (prefers-reduced-motion: reduce) {
+        .sn-drawer, .sn-scrim, .sn-row textarea { transition:none; }
+      }
     `}</style>
   );
 }
@@ -705,7 +1103,7 @@ function VersePicker({ onPick, onClose }) {
                 : vEnd ? `${book.name} ${chapter}:${Math.min(vStart, vEnd)}-${Math.max(vStart, vEnd)}`
                 : `${book.name} ${chapter}:${vStart} · tap another for a range`}
             </span>
-            <button className="sn-btn sn-btn-iris sn-btn-sm" disabled={vStart === null} onClick={commit}>Add</button>
+            <button className="sn-btn sn-btn-accent sn-btn-sm" disabled={vStart === null} onClick={commit}>Add</button>
           </div>
         )}
       </div>
@@ -773,7 +1171,7 @@ function TopicTags({ refStr, readOnly }) {
   );
 }
 
-function VerseChips({ verses, onChange, label, readOnly, quiet }) {
+function VerseChips({ verses, onChange, label, readOnly, quiet, hideAdd }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const list = normVerses(verses);
@@ -793,7 +1191,7 @@ function VerseChips({ verses, onChange, label, readOnly, quiet }) {
             )}
           </span>
         ))}
-        {!readOnly && (
+        {!readOnly && !hideAdd && (
           <button className={"sn-addverse" + (quiet && list.length === 0 ? " quiet" : "")}
             onClick={() => setOpen(true)}>+ {label || "Verse"}</button>
         )}
@@ -838,31 +1236,47 @@ const LIST_STYLES = [
 
 const ROMAN = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"];
 
+/* One marker per style, the same at every depth — what you pick is what you get. */
 function markerFor(style, level, ordinal) {
-  if (style === "dash") return level === 0 ? "—" : level === 1 ? "–" : "·";
-  if (style === "bullet") return level === 0 ? "•" : level === 1 ? "◦" : "▪";
-  if (style === "number") {
-    if (level === 0) return `${ordinal}.`;
-    if (level === 1) return `${String.fromCharCode(96 + ((ordinal - 1) % 26) + 1)}.`;
-    return `${ROMAN[(ordinal - 1) % 12]}.`;
+  switch (style) {
+    case "number": return `${ordinal}.`;
+    case "letter": return `${String.fromCharCode(64 + ((ordinal - 1) % 26) + 1)}.`;
+    case "roman":  return `${ROMAN[(ordinal - 1) % 12]}.`;
+    case "dash":   return "–";
+    default:       return level === 0 ? "•" : level === 1 ? "◦" : "▪";
   }
-  if (style === "letter") {
-    if (level === 0) return `${String.fromCharCode(64 + ((ordinal - 1) % 26) + 1)}.`;
-    if (level === 1) return `${ordinal}.`;
-    return `${ROMAN[(ordinal - 1) % 12]}.`;
-  }
-  return "•";
 }
 
-/* Compute the ordinal of each item within its own level+parent run */
-function withOrdinals(items) {
-  const counters = [0, 0, 0];
+/* ---------------------------------------------------------------
+   Grouping
+   Lines that sit at the same depth under the same parent form a
+   group, and a group shares one marker style. Change any line in
+   the group and the whole group changes. Each nested list is its
+   own group with its own style.
+--------------------------------------------------------------- */
+const ROOT_GROUP = "root";
+
+function layoutItems(items, groupStyles = {}) {
+  const parentStack = [];      // most recent item id seen at each level
+  const counters = {};         // ordinal per group
+
   return items.map((it) => {
     const lv = it.level;
-    counters[lv] += 1;
-    for (let k = lv + 1; k < 3; k++) counters[k] = 0;
-    return { ...it, ordinal: counters[lv] };
+    const groupId = lv === 0 ? ROOT_GROUP : (parentStack[lv - 1] || ROOT_GROUP);
+
+    counters[groupId] = (counters[groupId] || 0) + 1;
+    parentStack[lv] = it.id;
+    parentStack.length = lv + 1;   // deeper parents no longer apply
+
+    const style = groupStyles[groupId] || "bullet";
+    return { ...it, groupId, ordinal: counters[groupId], style };
   });
+}
+
+/* Older notes kept one style per point; treat it as the root group's style. */
+function pointGroupStyles(p) {
+  if (p.groupStyles) return p.groupStyles;
+  return { [ROOT_GROUP]: p.listStyle || "bullet" };
 }
 
 function AutoTextarea({ value, onChange, placeholder, onKeyDown }) {
@@ -870,8 +1284,8 @@ function AutoTextarea({ value, onChange, placeholder, onKeyDown }) {
   const [focused, setFocused] = useState(false);
 
   /* Idle rows hug their text; the focused row opens up to give room to write. */
-  const FOCUSED_MIN = 92;
-  const IDLE_MIN = 40;
+  const FOCUSED_MIN = 80;
+  const IDLE_MIN = 36;
 
   useEffect(() => {
     const el = ref.current;
@@ -890,8 +1304,10 @@ function AutoTextarea({ value, onChange, placeholder, onKeyDown }) {
   );
 }
 
-function TieredList({ items, style, onItems, onStyle }) {
-  const withOrd = withOrdinals(items);
+function TieredList({ items, groupStyles, onItems, onGroupStyles }) {
+  const laid = layoutItems(items, groupStyles);
+  const [styleMenu, setStyleMenu] = useState(null);
+  const [pickerFor, setPickerFor] = useState(null);   // line id awaiting a verse
 
   const update = (id, patch) => onItems(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   const removeItem = (id) => onItems(items.filter((it) => it.id !== id));
@@ -907,22 +1323,30 @@ function TieredList({ items, style, onItems, onStyle }) {
   };
   const outdent = (it) => { if (it.level > 0) update(it.id, { level: it.level - 1 }); };
 
+  /* Setting a style hits the whole group the line belongs to. */
+  const setGroupStyle = (groupId, styleId) => {
+    onGroupStyles({ ...groupStyles, [groupId]: styleId });
+    setStyleMenu(null);
+  };
+
+  const groupSize = (groupId) => laid.filter((x) => x.groupId === groupId).length;
+
   return (
     <>
-      <div className="sn-styleseg">
-        {LIST_STYLES.map((s) => (
-          <button key={s.id} className={style === s.id ? "on" : ""} onClick={() => onStyle(s.id)}>{s.label}</button>
-        ))}
-      </div>
-
-      {withOrd.map((it, idx) => (
+      {laid.map((it, idx) => (
         <div key={it.id}>
-          <div style={{ paddingLeft: it.level * 18 + 28, marginBottom: 6 }}>
-            <VerseChips verses={it.verses} onChange={(v) => update(it.id, { verses: v })}
-              label="Verse" quiet />
-          </div>
-          <div className="sn-row" style={{ paddingLeft: it.level * 18 }}>
-            <span className="sn-marker">{markerFor(style, it.level, it.ordinal)}</span>
+          <div className="sn-row" style={{ paddingLeft: it.level * 16 }}>
+            <button className={"sn-vbtn" + (it.verses.length ? " has" : "")}
+              title="Attach a verse to this line"
+              onClick={() => setPickerFor(it.id)}>
+              V{it.verses.length > 1 ? <sup>{it.verses.length}</sup> : ""}
+            </button>
+
+            <button className="sn-marker" title="Change the markers for this list"
+              onClick={() => setStyleMenu(styleMenu === it.groupId ? null : it.groupId)}>
+              {markerFor(it.style, it.level, it.ordinal)}
+            </button>
+
             <AutoTextarea
               value={it.text}
               placeholder={it.level === 0 ? "Sub-point…" : "Detail…"}
@@ -933,6 +1357,7 @@ function TieredList({ items, style, onItems, onStyle }) {
                 if (e.key === "Backspace" && it.text === "" && items.length > 1) { e.preventDefault(); removeItem(it.id); }
               }}
             />
+
             <div className="sn-rowtools">
               <button onClick={() => outdent(it)} disabled={it.level === 0} title="Outdent">←</button>
               <button onClick={() => indent(it, idx)}
@@ -940,11 +1365,45 @@ function TieredList({ items, style, onItems, onStyle }) {
               <button onClick={() => removeItem(it.id)} disabled={items.length === 1} title="Remove">×</button>
             </div>
           </div>
+
+          {it.verses.length > 0 && (
+            <div style={{ paddingLeft: it.level * 16 + 30, marginBottom: 8 }}>
+              <VerseChips verses={it.verses} onChange={(v) => update(it.id, { verses: v })} hideAdd />
+            </div>
+          )}
+
+          {styleMenu === it.groupId && laid.findIndex((x) => x.groupId === it.groupId) === idx && (
+            <div className="sn-stylemenu" style={{ marginLeft: it.level * 18 }}>
+              <div className="sn-stylemenu-hd">
+                Markers for {groupSize(it.groupId) === 1 ? "this line" : `these ${groupSize(it.groupId)} lines`}
+              </div>
+              <div className="sn-stylemenu-grid">
+                {LIST_STYLES.map((sOpt) => (
+                  <button key={sOpt.id} className={it.style === sOpt.id ? "on" : ""}
+                    onClick={() => setGroupStyle(it.groupId, sOpt.id)}>
+                    <span className="pv">{markerFor(sOpt.id, it.level, 1)}</span>
+                    {sOpt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ))}
 
       <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ marginTop: 4 }}
-        onClick={() => addAfter(items.length - 1, 0)}>+ Line</button>
+        onClick={() => addAfter(items.length - 1, items[items.length - 1]?.level || 0)}>+ Line</button>
+
+      {pickerFor && (
+        <VersePicker onClose={() => setPickerFor(null)}
+          onPick={(ref) => {
+            const target = items.find((x) => x.id === pickerFor);
+            const cur = normVerses(target?.verses || []);
+            if (!cur.some((v) => v.ref === ref)) {
+              update(pickerFor, { verses: [...cur, { ref, gist: "" }] });
+            }
+          }} />
+      )}
     </>
   );
 }
@@ -953,7 +1412,7 @@ function TieredList({ items, style, onItems, onStyle }) {
    NOTE FORM
    =============================================================== */
 const newItem = (level = 0) => ({ id: uid(), text: "", level, verses: [] });
-const newPoint = () => ({ id: uid(), header: "", verses: [], listStyle: "bullet", items: [newItem()] });
+const newPoint = () => ({ id: uid(), header: "", verses: [], groupStyles: {}, items: [newItem()] });
 
 function emptyNote() {
   return {
@@ -1144,7 +1603,7 @@ function NoteForm({ initial, onSave, onCancel }) {
       <div className="sn-secttl">Sermon points</div>
       {note.points.map((p, i) => (
         <div className="sn-point" key={p.id}>
-          <div className="sn-point-num">{i + 1}</div>
+          <div className="sn-point-num">Point {i + 1}</div>
           {note.points.length > 1 && (
             <button className="sn-point-x"
               onClick={() => set("points", note.points.filter((x) => x.id !== p.id))}>remove</button>
@@ -1155,9 +1614,10 @@ function NoteForm({ initial, onSave, onCancel }) {
             <VerseChips verses={p.verses} onChange={(v) => patchPoint(p.id, { verses: v })} label="Verse" />
           </div>
           <TieredList
-            items={p.items} style={p.listStyle}
+            items={p.items}
+            groupStyles={pointGroupStyles(p)}
             onItems={(items) => patchPoint(p.id, { items })}
-            onStyle={(s) => patchPoint(p.id, { listStyle: s })}
+            onGroupStyles={(gs) => patchPoint(p.id, { groupStyles: gs })}
           />
         </div>
       ))}
@@ -1184,7 +1644,7 @@ function NoteForm({ initial, onSave, onCancel }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
         {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={cancel}>Cancel</button>}
-        <button className="sn-btn sn-btn-iris" style={{ flex: 2 }} disabled={!note.title.trim()}
+        <button className="sn-btn sn-btn-accent" style={{ flex: 2 }} disabled={!note.title.trim()}
           onClick={submit}>{initial ? "Save changes" : "Save note"}</button>
       </div>
       <DraftBar status={draftStatus} restored={restored} onDiscard={discardDraft} />
@@ -1259,7 +1719,9 @@ function NoteDetail({ note, onBack, onEdit, onDelete }) {
       {note.bigIdea && (
         <div className="sn-dtl">
           <div className="sn-dtl-lbl">Big idea</div>
-          <div className="sn-dtl-txt sn-serif" style={{ fontSize: 18, lineHeight: 1.55, fontWeight: 400 }}>{note.bigIdea}</div>
+          <div className="sn-dtl-txt sn-serif" style={{ fontSize: 18, lineHeight: 1.7, fontWeight: 400 }}>
+            <span className="sn-hl">{note.bigIdea}</span>
+          </div>
         </div>
       )}
 
@@ -1267,7 +1729,7 @@ function NoteDetail({ note, onBack, onEdit, onDelete }) {
         <div className="sn-dtl">
           <div className="sn-dtl-lbl">Points</div>
           {note.points.map((p, i) => {
-            const items = withOrdinals(p.items).filter((it) => it.text.trim());
+            const items = layoutItems(p.items, pointGroupStyles(p)).filter((it) => it.text.trim());
             if (!p.header && items.length === 0) return null;
             return (
               <div key={p.id} style={{ marginBottom: 16 }}>
@@ -1278,8 +1740,8 @@ function NoteDetail({ note, onBack, onEdit, onDelete }) {
                 {items.map((it) => (
                   <div key={it.id} style={{ paddingLeft: it.level * 16, marginBottom: 5 }}>
                     <div style={{ display: "flex", gap: 7, fontSize: 14, lineHeight: 1.45 }}>
-                      <span style={{ color: "var(--iris-deep)", fontWeight: 600, minWidth: 16 }}>
-                        {markerFor(p.listStyle, it.level, it.ordinal)}
+                      <span style={{ color: "var(--accent-deep)", fontWeight: 600, minWidth: 16 }}>
+                        {markerFor(it.style, it.level, it.ordinal)}
                       </span>
                       <span>{it.text}</span>
                     </div>
@@ -1634,14 +2096,19 @@ function migrateDevotion(d) {
 /* All written text from a devotion, whatever method it used */
 const devotionText = (d) => Object.values(migrateDevotion(d).fields || {}).join(" ");
 
-function DevotionForm({ initial, onSave, onCancel }) {
-  const [d, setD] = useState(initial ? migrateDevotion(initial) : emptyDevotion());
+function DevotionForm({ initial, seed, onSave, onCancel }) {
+  const [d, setD] = useState(() => {
+    if (initial) return migrateDevotion(initial);
+    const base = emptyDevotion();
+    if (seed) return { ...base, title: seed.title || "", passage: seed.passage || [] };
+    return base;
+  });
   const [restored, setRestored] = useState(false);
-  const [ready, setReady] = useState(!!initial);
+  const [ready, setReady] = useState(!!initial || !!seed);
   const set = (k, v) => setD((x) => ({ ...x, [k]: v }));
 
   useEffect(() => {
-    if (initial) return;
+    if (initial || seed) { setReady(true); return; }
     let alive = true;
     loadDraft("devotion").then((saved) => {
       if (!alive) return;
@@ -1747,7 +2214,7 @@ function DevotionForm({ initial, onSave, onCancel }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
         {onCancel && <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} onClick={cancel}>Cancel</button>}
-        <button className="sn-btn sn-btn-iris" style={{ flex: 2 }}
+        <button className="sn-btn sn-btn-accent" style={{ flex: 2 }}
           disabled={!hasWriting && d.passage.length === 0}
           onClick={submit}>{initial ? "Save changes" : "Save devotion"}</button>
       </div>
@@ -1826,11 +2293,11 @@ function parseRef(ref) {
   return { book: m[1], chapter: +m[2], start: +m[3], end: m[4] ? +m[4] : +m[3] };
 }
 
-function VerseSearch({ entries, onOpen }) {
-  const [mode, setMode] = useState("topic");   // topic | reference
-  const [q, setQ] = useState("");
+function VerseSearch({ entries, onOpen, jumpTo }) {
+  const [mode, setMode] = useState(jumpTo?.ref ? "reference" : "topic");
+  const [q, setQ] = useState(jumpTo?.ref || "");
   const [browse, setBrowse] = useState(false);
-  const [openTopic, setOpenTopic] = useState(null);
+  const [openTopic, setOpenTopic] = useState(jumpTo?.topic || null);
   const [expanded, setExpanded] = useState(null);
   const { topics, setTopicsFor } = React.useContext(TopicsContext);
 
@@ -1932,7 +2399,7 @@ function VerseSearch({ entries, onOpen }) {
             <button className="sn-back" onClick={() => setOpenTopic(null)}>‹ All topics</button>
             <div className="sn-topic-hd">
               <span className="sn-topic-title">{openTopic}</span>
-              <button className="sn-btn sn-btn-iris sn-btn-sm" onClick={() => setBrowse(true)}>+ Add verse</button>
+              <button className="sn-btn sn-btn-accent sn-btn-sm" onClick={() => setBrowse(true)}>+ Add verse</button>
             </div>
             {(topicIndex.find((t) => t.topic === openTopic)?.refs || []).map((ref) => {
               const e = byRef[ref] || { ref, gists: [], notes: [] };
@@ -2016,6 +2483,346 @@ function VerseSearch({ entries, onOpen }) {
 }
 
 
+/* ---------------------------------------------------------------
+   Weekly resurfacing — pulls a passage back up out of your own
+   library, favouring ones you haven't touched in a while. Changes
+   once a week rather than daily so it has time to sink in.
+--------------------------------------------------------------- */
+function weekIndex() {
+  const start = new Date(2026, 0, 1).getTime();
+  return Math.floor((Date.now() - start) / (7 * 86400000));
+}
+
+function resurfacedVerse(entries, topics) {
+  const map = new Map();
+  entries.forEach((e) => {
+    allVerses(e).forEach(({ ref, gist }) => {
+      if (!map.has(ref)) map.set(ref, { ref, gists: [], lastSeen: e.date, topics: topics[ref] || [] });
+      const rec = map.get(ref);
+      if (gist?.trim() && !rec.gists.includes(gist)) rec.gists.push(gist);
+      if (e.date > rec.lastSeen) rec.lastSeen = e.date;
+    });
+  });
+
+  /* Something you wrote about is worth more than a bare citation */
+  const candidates = [...map.values()]
+    .filter((r) => r.gists.length > 0 || r.topics.length > 0)
+    .sort((a, b) => (a.lastSeen < b.lastSeen ? -1 : 1));
+
+  if (candidates.length === 0) return null;
+  return candidates[weekIndex() % candidates.length];
+}
+
+function topTopics(topics, limit = 6) {
+  const counts = new Map();
+  Object.values(topics).forEach((list) =>
+    (list || []).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([topic, count]) => ({ topic, count }));
+}
+
+/* ===============================================================
+   HOME
+   =============================================================== */
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function PlanSetup({ plan, onSave, onCancel }) {
+  const [scopeId, setScopeId] = useState(plan?.scopeId || "all");
+  const [paced, setPaced] = useState(plan?.paced ?? false);
+  const [targetDays, setTargetDays] = useState(plan?.targetDays || 365);
+
+  const stats = useMemo(() => coverageStats({}, scopeId), [scopeId]);
+  const perDay = Math.ceil(stats.totalCh / (targetDays || 1));
+
+  return (
+    <div className="sn-panel">
+      <div className="sn-panel-hd">
+        <span>{plan ? "Change plan" : "Start a reading plan"}</span>
+        {plan && <button className="sn-link" onClick={onCancel}>Cancel</button>}
+      </div>
+
+      <div className="sn-sublbl">What are you reading through</div>
+      <div className="sn-scopegrid">
+        {SCOPES.map((sc) => (
+          <button key={sc.id} className={"sn-scopeopt" + (scopeId === sc.id ? " on" : "")}
+            onClick={() => setScopeId(sc.id)}>{sc.label}</button>
+        ))}
+      </div>
+
+      <div className="sn-sublbl" style={{ marginTop: 13 }}>Pace</div>
+      <div className="sn-paceopts">
+        <button className={"sn-paceopt" + (!paced ? " on" : "")} onClick={() => setPaced(false)}>
+          <div className="nm">No deadline</div>
+          <div className="bl">Read at whatever pace life allows. Progress only.</div>
+        </button>
+        <button className={"sn-paceopt" + (paced ? " on" : "")} onClick={() => setPaced(true)}>
+          <div className="nm">On a timeline</div>
+          <div className="bl">Set a finish date and see if you're keeping up.</div>
+        </button>
+      </div>
+
+      {paced && (
+        <div style={{ marginTop: 11 }}>
+          <div className="sn-sublbl">Finish in</div>
+          <div className="sn-dayopts">
+            {[30, 90, 180, 365].map((d) => (
+              <button key={d} className={"sn-dayopt" + (targetDays === d ? " on" : "")}
+                onClick={() => setTargetDays(d)}>{d}d</button>
+            ))}
+          </div>
+          <div className="sn-note" style={{ marginTop: 6 }}>
+            About {perDay} chapter{perDay === 1 ? "" : "s"} a day to finish on time.
+          </div>
+        </div>
+      )}
+
+      <button className="sn-btn sn-btn-accent sn-btn-full" style={{ marginTop: 13 }}
+        onClick={() => onSave({ scopeId, paced, targetDays: paced ? targetDays : null })}>
+        {plan ? "Save plan" : "Start reading"}
+      </button>
+      {plan && (
+        <div className="sn-note" style={{ marginTop: 7 }}>
+          Everything you've already logged is kept — only the goal changes.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
+  const [showLog, setShowLog] = useState(false);
+  const coverage = plan.coverage || {};
+  const stats = useMemo(() => coverageStats(coverage, plan.scopeId), [coverage, plan.scopeId]);
+  const pace = paceStatus(plan, stats);
+  const next = nextUnread(coverage, plan.scopeId);
+  const suggestion = useMemo(() => suggestNext(coverage, plan.scopeId, 3), [coverage, plan.scopeId]);
+  const streak = streakOf(plan.log);
+  const scope = SCOPES.find((sc) => sc.id === plan.scopeId);
+
+  return (
+    <div className="sn-panel">
+      <div className="sn-panel-hd">
+        <span>{scope?.label}{plan.paced ? ` · ${plan.targetDays}d` : " · no deadline"}</span>
+        <button className="sn-link" onClick={onSetup}>Change</button>
+      </div>
+
+      <div className="sn-progress-row">
+        <div className="sn-progress-num">
+          <strong>{stats.pct}</strong><span>%</span>
+        </div>
+        <div className="sn-progress-meta">
+          <div className="sn-meter"><div className="sn-meter-fill" style={{ width: stats.pct + "%" }} /></div>
+          <div className="sn-note" style={{ margin: 0 }}>
+            {stats.doneCh} of {stats.totalCh} chapters
+            {stats.partialCh > 0 && <> · {stats.partialCh} part-read</>}
+            {streak > 1 && <> · <span className="sn-streak">{streak}-day streak</span></>}
+          </div>
+        </div>
+      </div>
+
+      {pace && (
+        <div className={"sn-pace" + (pace.onTrack ? " ok" : " behind")}>
+          {pace.daysOff === 0 ? "Right on pace."
+            : pace.onTrack ? `${pace.daysOff} day${pace.daysOff === 1 ? "" : "s"} ahead.`
+            : `${Math.abs(pace.daysOff)} day${Math.abs(pace.daysOff) === 1 ? "" : "s"} behind — no rush.`}
+          {pace.remaining > 0 && <> About {pace.neededPerDay} verses a day to finish on time.</>}
+        </div>
+      )}
+
+      {next ? (
+        <>
+          <div className="sn-today-lbl">
+            {next.partial ? "Partly read — pick up at" : "Next unread"}
+          </div>
+          <div className="sn-today sn-serif">
+            {labelChapters(suggestion)}
+            {next.partial && (
+              <span className="sn-partial"> ({next.versesRead}/{next.versesTotal} verses in {next.book} {next.ch})</span>
+            )}
+          </div>
+          <div className="sn-today-actions">
+            <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 1 }}
+              onClick={() => onQuickRead(`${next.book} ${next.ch}`)}>
+              Read {next.book} {next.ch}
+            </button>
+            <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ flex: 1 }}
+              onClick={() => onDevotionFrom(suggestion)}>Write on it</button>
+          </div>
+        </>
+      ) : (
+        <div className="sn-today sn-serif" style={{ marginBottom: 10 }}>
+          {scope?.label} complete. Well done.
+        </div>
+      )}
+
+      <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm" style={{ marginTop: 9 }}
+        onClick={() => setShowLog(true)}>
+        Log something else I read
+      </button>
+
+      {showLog && (
+        <VersePicker onClose={() => setShowLog(false)} onPick={(ref) => onLog(ref)} />
+      )}
+
+      {(plan.log || []).length > 0 && (
+        <div className="sn-loglist">
+          <div className="sn-sublbl" style={{ marginTop: 12 }}>Recently read</div>
+          {[...plan.log].slice(-5).reverse().map((r, i) => (
+            <div className="sn-logrow" key={i}>
+              <span className="sn-mono">{r.ref}</span>
+              <span className="dt">
+                {new Date(r.on + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
+                onNew, onOpen, onOpenTopic, onAllTopics }) {
+  const [editingPlan, setEditingPlan] = useState(false);
+  const shortcuts = useMemo(() => topTopics(topics, 6), [topics]);
+  const resurfaced = useMemo(() => resurfacedVerse(entries, topics), [entries, topics]);
+  const recent = [...entries].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 3);
+  const today = new Date().toLocaleDateString(undefined,
+    { weekday: "long", month: "long", day: "numeric" });
+
+  return (
+    <div className="sn-scroll">
+      <div className="sn-greet">
+        <div className="sn-greet-hi sn-serif">{greeting()}, John</div>
+        <div className="sn-greet-date">{today}</div>
+      </div>
+
+      <div className="sn-startrow">
+        <button className="sn-start sermon" onClick={() => onNew("sermon")}>
+          <span className="ico">✎</span>
+          <span>
+            <span className="nm">Sermon notes</span>
+            <span className="sub">Structure it as you listen</span>
+          </span>
+        </button>
+        <button className="sn-start devotion" onClick={() => onNew("devotion")}>
+          <span className="ico">✻</span>
+          <span>
+            <span className="nm">Devotion</span>
+            <span className="sub">Read, reflect, pray</span>
+          </span>
+        </button>
+      </div>
+
+      {(!plan || editingPlan) ? (
+        <PlanSetup plan={plan}
+          onSave={(cfg) => { onSetPlan(cfg); setEditingPlan(false); }}
+          onCancel={() => setEditingPlan(false)} />
+      ) : (
+        <PlanCard plan={plan}
+          onSetup={() => setEditingPlan(true)}
+          onLog={onLogReading}
+          onQuickRead={onLogReading}
+          onDevotionFrom={onDevotionFrom} />
+      )}
+
+      {shortcuts.length > 0 && (
+        <>
+          <div className="sn-secttl">Pray through</div>
+          <div className="sn-topicrow">
+            {shortcuts.map((t, i) => (
+              <button className={"sn-topicpill" + (i === 0 ? " hot" : "")} key={t.topic}
+                onClick={() => onOpenTopic(t.topic)}>
+                {t.topic}<span className="ct">{t.count}</span>
+              </button>
+            ))}
+            <button className="sn-topicpill all" onClick={onAllTopics}>All topics ›</button>
+          </div>
+        </>
+      )}
+
+      {resurfaced && (
+        <>
+          <div className="sn-secttl">Worth revisiting</div>
+          <div className="sn-resurface" onClick={() => onOpenTopic(null, resurfaced.ref)}>
+            <div className="sn-resurface-ref sn-mono">{resurfaced.ref}</div>
+            {resurfaced.gists[0] && (
+              <div className="sn-resurface-gist sn-serif">
+                <span className="sn-hl">{resurfaced.gists[0]}</span>
+              </div>
+            )}
+            <div className="sn-resurface-ft">
+              {resurfaced.topics.slice(0, 3).map((t) => (
+                <span className="sn-topic mini" key={t}>{t}</span>
+              ))}
+              <span className="ago">
+                last noted {new Date(resurfaced.lastSeen + "T00:00:00")
+                  .toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <div className="sn-secttl">Recent</div>
+          {recent.map((e) => (
+            <div className="sn-recent" key={e.id} onClick={() => onOpen(e)}>
+              <span className={"sn-dotkind " + (e.kind === "devotion" ? "dev" : "ser")} />
+              <span className="ttl">{e.title || (e.kind === "devotion" ? "Devotion" : "Untitled")}</span>
+              <span className="dt">
+                {new Date(e.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ===============================================================
+   DRAWER
+   =============================================================== */
+function Drawer({ open, tab, onClose, onGo, counts }) {
+  const items = [
+    { id: "home",     icon: "⌂", label: "Home" },
+    { id: "sermon",   icon: "✎", label: "New sermon" },
+    { id: "devotion", icon: "✻", label: "New devotion" },
+    { id: "library",  icon: "📖", label: "Library", count: counts.entries },
+    { id: "verses",   icon: "🔎", label: "Verses", count: counts.verses },
+    { id: "data",     icon: "⤓", label: "Backup & storage" },
+  ];
+
+  return (
+    <>
+      <div className={"sn-scrim" + (open ? " on" : "")} onClick={onClose} />
+      <nav className={"sn-drawer" + (open ? " on" : "")}>
+        <div className="sn-drawer-hd">
+          <div className="sn-serif sn-brand">John's Notes</div>
+          <button className="sn-x" onClick={onClose}>×</button>
+        </div>
+        {items.map((it) => (
+          <button key={it.id} className={"sn-drawer-item" + (tab === it.id ? " on" : "")}
+            onClick={() => onGo(it.id)}>
+            <span className="ico">{it.icon}</span>
+            <span className="lbl">{it.label}</span>
+            {it.count > 0 && <span className="ct">{it.count}</span>}
+          </button>
+        ))}
+      </nav>
+    </>
+  );
+}
+
 /* ===============================================================
    DATA — export, import, storage health
    =============================================================== */
@@ -2023,7 +2830,7 @@ function exportFilename() {
   return `johns-notes-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
-function DataPanel({ notes, devotions, topics, onImport, onFlash }) {
+function DataPanel({ notes, devotions, topics, plan, onImport, onFlash }) {
   const [persist, setPersist] = useState({ supported: false, persisted: false });
   const [est, setEst] = useState(null);
   const [pending, setPending] = useState(null);
@@ -2049,7 +2856,7 @@ function DataPanel({ notes, devotions, topics, onImport, onFlash }) {
       version: 1,
       exportedAt: new Date().toISOString(),
       counts: { notes: notes.length, devotions: devotions.length, taggedRefs: Object.keys(topics).length },
-      notes, devotions, topics,
+      notes, devotions, topics, plan,
       ...(photoBlobs ? { photoBlobs } : {}),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -2097,7 +2904,7 @@ function DataPanel({ notes, devotions, topics, onImport, onFlash }) {
         Everything lives on this phone alone. A backup file is the only way to move
         your notes to a new device or recover them if this one is lost.
       </div>
-      <button className="sn-btn sn-btn-iris sn-btn-full" onClick={() => doExport(false)}>
+      <button className="sn-btn sn-btn-accent sn-btn-full" onClick={() => doExport(false)}>
         Export {notes.length + devotions.length} entries
       </button>
       <button className="sn-btn sn-btn-ghost sn-btn-full" style={{ marginTop: 8 }}
@@ -2133,7 +2940,7 @@ function DataPanel({ notes, devotions, topics, onImport, onFlash }) {
               onClick={() => setPending(null)}>Cancel</button>
             <button className="sn-btn sn-btn-danger sn-btn-sm" style={{ flex: 1 }}
               onClick={() => apply("replace")}>Replace</button>
-            <button className="sn-btn sn-btn-iris sn-btn-sm" style={{ flex: 1 }}
+            <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 1 }}
               onClick={() => apply("merge")}>Merge</button>
           </div>
         </div>
@@ -2180,17 +2987,21 @@ function App() {
   const [notes, setNotes] = useState([]);
   const [devotions, setDevotions] = useState([]);
   const [topics, setTopics] = useState({});
+  const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("sermon");   // sermon | devotion | library | verses | data
+  const [tab, setTab] = useState("home");
+  const [drawer, setDrawer] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [seed, setSeed] = useState(null);        // prefill for a new devotion
+  const [jumpTo, setJumpTo] = useState(null);    // topic or ref to open in Verses
   const [viewing, setViewing] = useState(null);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    Promise.all([loadNotes(), loadDevotions(), loadTopics()]).then(([n, d, t]) => {
-      setNotes(n); setDevotions(d); setTopics(t); setLoading(false);
+    Promise.all([loadNotes(), loadDevotions(), loadTopics(), loadPlan()]).then(([n, d, t, p]) => {
+      setNotes(n); setDevotions(d); setTopics(t); setPlan(p); setLoading(false);
     });
-    requestPersistence();   // ask once, early
+    requestPersistence();
   }, []);
 
   const flash = (m) => { setToast(m); setTimeout(() => setToast(null), 1700); };
@@ -2204,10 +3015,13 @@ function App() {
   };
   const topicsValue = useMemo(() => ({ topics, setTopicsFor }), [topics]);
 
-  /* Sermons and devotions in one stream for the library and verse index */
   const entries = useMemo(
     () => [...notes.map((n) => ({ ...n, kind: "sermon" })), ...devotions],
     [notes, devotions]
+  );
+  const verseCount = useMemo(
+    () => new Set(entries.flatMap((e) => allVerses(e).map((v) => v.ref))).size,
+    [entries]
   );
 
   const persistNotes = async (next) => {
@@ -2217,6 +3031,42 @@ function App() {
   const persistDevotions = async (next) => {
     setDevotions(next);
     if (!(await saveDevotions(next))) flash("Couldn't save — try again");
+  };
+
+  /* ---- reading plan ---- */
+  const choosePlan = async (cfg) => {
+    const next = {
+      ...cfg,
+      startDate: plan?.startDate || new Date().toISOString().slice(0, 10),
+      coverage: plan?.coverage || {},     // reading already logged is never lost
+      log: plan?.log || [],
+    };
+    setPlan(next); await savePlan(next);
+    flash(plan ? "Plan updated" : "Plan started");
+  };
+
+  /* One entry point for everything that counts as reading */
+  const logReading = async (ref, quiet) => {
+    if (!plan) return;
+    const coverage = addToCoverage(plan.coverage || {}, ref);
+    if (coverage === plan.coverage) return;
+    const next = {
+      ...plan,
+      coverage,
+      log: [...(plan.log || []), { ref, on: new Date().toISOString().slice(0, 10) }].slice(-200),
+    };
+    setPlan(next); await savePlan(next);
+    if (!quiet) flash(`${ref} marked read`);
+  };
+
+  const devotionFromDay = (chapters) => {
+    setSeed({
+      title: labelChapters(chapters),
+      passage: chapters.map((c) => ({ ref: `${c.book} ${c.ch}`, gist: "" })),
+      readRefs: chapters.map((c) => `${c.book} ${c.ch}`),
+    });
+    setEditing(null);
+    setTab("devotion");
   };
 
   const handleSaveNote = async (note) => {
@@ -2229,7 +3079,11 @@ function App() {
     const item = { ...d, kind: "devotion" };
     const exists = devotions.some((x) => x.id === item.id);
     await persistDevotions(exists ? devotions.map((x) => (x.id === item.id ? item : x)) : [item, ...devotions]);
-    setEditing(null); setViewing(null); setTab("library");
+    /* Writing on a passage counts as having read it */
+    if (plan) {
+      for (const v of normVerses(item.passage || [])) await logReading(v.ref, true);
+    }
+    setEditing(null); setSeed(null); setViewing(null); setTab("library");
     flash(exists ? "Devotion updated" : "Devotion saved");
   };
   const handleDelete = async (id, kind) => {
@@ -2243,8 +3097,7 @@ function App() {
   };
 
   const openForEdit = (item) => {
-    setEditing(item);
-    setViewing(null);
+    setEditing(item); setViewing(null); setSeed(null);
     setTab(item.kind === "devotion" ? "devotion" : "sermon");
   };
 
@@ -2259,14 +3112,12 @@ function App() {
     const inTopics = data.topics || {};
 
     if (mode === "replace") {
-      await persistNotes(inNotes);
-      await persistDevotions(inDevs);
+      await persistNotes(inNotes); await persistDevotions(inDevs);
       setTopics(inTopics); await saveTopics(inTopics);
+      if (data.plan) { setPlan(data.plan); await savePlan(data.plan); }
       flash(`Replaced with ${inNotes.length + inDevs.length} entries`);
       return;
     }
-
-    // Merge: existing entries win on id collision, topics union
     const mergeById = (mine, theirs) => {
       const ids = new Set(mine.map((x) => x.id));
       return [...mine, ...theirs.filter((x) => !ids.has(x.id))];
@@ -2277,12 +3128,24 @@ function App() {
     Object.entries(inTopics).forEach(([ref, list]) => {
       nextTopics[ref] = [...new Set([...(nextTopics[ref] || []), ...list])];
     });
-
-    await persistNotes(nextNotes);
-    await persistDevotions(nextDevs);
+    await persistNotes(nextNotes); await persistDevotions(nextDevs);
     setTopics(nextTopics); await saveTopics(nextTopics);
     const added = (nextNotes.length - notes.length) + (nextDevs.length - devotions.length);
     flash(added ? `Added ${added} new entries` : "Already up to date");
+  };
+
+  const openInVerses = (topic, ref) => {
+    setJumpTo({ topic: topic || null, ref: ref || null });
+    setViewing(null);
+    setTab("verses");
+  };
+
+  const go = (id) => {
+    setDrawer(false);
+    setViewing(null);
+    if (id !== "verses") setJumpTo(null);
+    if (id === "sermon" || id === "devotion") { setEditing(null); setSeed(null); }
+    setTab(id);
   };
 
   if (loading) {
@@ -2290,40 +3153,55 @@ function App() {
       <div className="sn-empty" style={{ paddingTop: 90 }}>Loading your notes…</div></div>;
   }
 
-  const subtitle = {
-    sermon: editing ? "Editing a sermon." : "Capture it while it's fresh.",
-    devotion: editing ? "Editing a devotion." : "Sit with it and write.",
-    library: "Everything you've kept, in one place.",
-    verses: "Your verses, by topic.",
-    data: "Backup, restore, and storage.",
-  }[tab];
+  const titles = {
+    home: "John's Notes",
+    sermon: editing ? "Edit sermon" : "New sermon",
+    devotion: editing ? "Edit devotion" : "New devotion",
+    library: viewing ? (viewing.kind === "devotion" ? "Devotion" : "Sermon") : "Library",
+    verses: "Verses",
+    data: "Backup & storage",
+  };
 
   return (
     <TopicsContext.Provider value={topicsValue}>
     <div className="sn-root">
       <GlobalStyle />
+
       <div className="sn-header">
         <div className="sn-header-row">
-          <h1 className="sn-serif sn-brand">John's Notes</h1>
-          <button className={"sn-datahtn" + (tab === "data" ? " on" : "")}
-            title="Backup & storage"
-            onClick={() => { setViewing(null); setTab(tab === "data" ? "library" : "data"); }}>⋯</button>
+          <button className="sn-burger" onClick={() => setDrawer(true)} title="Menu">
+            <span /><span /><span />
+          </button>
+          <h1 className={"sn-serif" + (tab === "home" ? " sn-brand" : "")}>{titles[tab]}</h1>
+          <span className="sn-header-sp" />
         </div>
-        <p>{subtitle}</p>
       </div>
+
+      <Drawer open={drawer} tab={tab} onClose={() => setDrawer(false)} onGo={go}
+        counts={{ entries: entries.length, verses: verseCount }} />
+
+      {tab === "home" && (
+        <Home entries={entries} plan={plan} topics={topics}
+          onSetPlan={choosePlan} onLogReading={logReading}
+          onDevotionFrom={devotionFromDay} onNew={go}
+          onOpen={(e) => { setViewing(e); setTab("library"); }}
+          onOpenTopic={openInVerses}
+          onAllTopics={() => openInVerses(null, null)} />
+      )}
 
       {tab === "sermon" && (
         <NoteForm key={editing ? editing.id : "blank-sermon"}
           initial={editing && editing.kind !== "devotion" ? editing : null}
           onSave={handleSaveNote}
-          onCancel={editing ? () => { setEditing(null); setTab("library"); } : null} />
+          onCancel={() => { setEditing(null); setTab(editing ? "library" : "home"); }} />
       )}
 
       {tab === "devotion" && (
-        <DevotionForm key={editing ? editing.id : "blank-devotion"}
+        <DevotionForm key={editing ? editing.id : (seed ? "seed-" + seed.planDay : "blank-devotion")}
           initial={editing && editing.kind === "devotion" ? editing : null}
+          seed={seed}
           onSave={handleSaveDevotion}
-          onCancel={editing ? () => { setEditing(null); setTab("library"); } : null} />
+          onCancel={() => { setEditing(null); setSeed(null); setTab(editing ? "library" : "home"); }} />
       )}
 
       {tab === "library" && !viewing && <Library entries={entries} onOpen={setViewing} />}
@@ -2336,30 +3214,17 @@ function App() {
       )}
 
       {tab === "verses" && (
-        <VerseSearch entries={entries} onOpen={(e) => { setViewing(e); setTab("library"); }} />
+        <VerseSearch entries={entries} jumpTo={jumpTo}
+          key={jumpTo ? (jumpTo.topic || jumpTo.ref || "all") : "verses"}
+          onOpen={(e) => { setViewing(e); setTab("library"); }} />
       )}
 
       {tab === "data" && (
-        <DataPanel notes={notes} devotions={devotions} topics={topics}
+        <DataPanel notes={notes} devotions={devotions} topics={topics} plan={plan}
           onImport={handleImport} onFlash={flash} />
       )}
 
       {toast && <div className="sn-toast">{toast}</div>}
-
-      <div className="sn-nav">
-        <button className={"sn-nav-btn" + (tab === "sermon" ? " on" : "")}
-          onClick={() => { setEditing(null); setViewing(null); setTab("sermon"); }}>
-          <span className="sn-nav-ico">✎</span>Sermon</button>
-        <button className={"sn-nav-btn" + (tab === "devotion" ? " on" : "")}
-          onClick={() => { setEditing(null); setViewing(null); setTab("devotion"); }}>
-          <span className="sn-nav-ico">✻</span>Devotion</button>
-        <button className={"sn-nav-btn" + (tab === "library" ? " on" : "")}
-          onClick={() => { setViewing(null); setTab("library"); }}>
-          <span className="sn-nav-ico">📖</span>Library</button>
-        <button className={"sn-nav-btn" + (tab === "verses" ? " on" : "")}
-          onClick={() => setTab("verses")}>
-          <span className="sn-nav-ico">🔎</span>Verses</button>
-      </div>
     </div>
     </TopicsContext.Provider>
   );

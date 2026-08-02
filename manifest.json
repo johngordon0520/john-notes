@@ -1,13 +1,13 @@
 {
   "name": "John's Notes",
   "short_name": "John's Notes",
-  "description": "Sermon notes with tiered points, a scripture picker, and topic-tagged verses. Works offline.",
+  "description": "Sermon notes and devotions with a scripture picker, topic-tagged verses, and a reading plan. Works offline.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#E7EFFA",
-  "theme_color": "#E7EFFA",
+  "background_color": "#FDFBF6",
+  "theme_color": "#FDFBF6",
   "categories": ["productivity", "lifestyle"],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
