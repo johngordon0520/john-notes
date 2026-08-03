@@ -676,6 +676,18 @@ function GlobalStyle() {
       .sn-logrow .dt { font-size:11.5px; color:var(--ink-3); }
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
+      /* topic search — small, sits above the shortcut pills */
+      .sn-topicsearch { display:flex; align-items:center; gap:9px; background:var(--card);
+        border:1px solid var(--rule); border-radius:100px; padding:0 14px; margin-bottom:11px;
+        min-height:42px; transition:border-color .15s; }
+      .sn-topicsearch:focus-within { border-color:var(--accent); }
+      .sn-topicsearch .ico { font-size:15px; color:var(--ink-3); flex-shrink:0; line-height:1; }
+      .sn-topicsearch input { flex:1; min-width:0; border:none; background:transparent; outline:none;
+        font-family:'Inter',sans-serif; font-size:14.5px; color:var(--ink); padding:10px 0; }
+      .sn-topicsearch input::placeholder { color:var(--ink-3); }
+      .sn-topicsearch .clear { background:none; border:none; color:var(--ink-3); font-size:19px;
+        line-height:1; cursor:pointer; padding:4px 0 4px 6px; flex-shrink:0; }
+
       .sn-topicrow { display:flex; flex-wrap:wrap; gap:7px; }
       .sn-topicpill { display:inline-flex; align-items:center; gap:7px; background:var(--card);
         border:1px solid var(--rule); color:var(--ink); border-radius:100px;
@@ -2691,7 +2703,17 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
 function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
                 onNew, onOpen, onOpenTopic, onAllTopics }) {
   const [editingPlan, setEditingPlan] = useState(false);
+  const [topicQ, setTopicQ] = useState("");
   const shortcuts = useMemo(() => topTopics(topics, 6), [topics]);
+  const allTopics = useMemo(() => topTopics(topics, 999), [topics]);
+  const matches = useMemo(() => {
+    const q = topicQ.trim().toLowerCase();
+    if (!q) return [];
+    /* starts-with first, then anywhere — closest guess leads */
+    const starts = allTopics.filter((t) => t.topic.startsWith(q));
+    const rest = allTopics.filter((t) => !t.topic.startsWith(q) && t.topic.includes(q));
+    return [...starts, ...rest].slice(0, 8);
+  }, [allTopics, topicQ]);
   const resurfaced = useMemo(() => resurfacedVerse(entries, topics), [entries, topics]);
   const recent = [...entries].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 3);
   const today = new Date().toLocaleDateString(undefined,
@@ -2733,17 +2755,37 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
           onDevotionFrom={onDevotionFrom} />
       )}
 
-      {shortcuts.length > 0 && (
+      {allTopics.length > 0 && (
         <>
           <div className="sn-secttl">Pray through</div>
+
+          <div className="sn-topicsearch">
+            <span className="ico">⌕</span>
+            <input value={topicQ} onChange={(e) => setTopicQ(e.target.value)}
+              placeholder="What are you praying about?"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && matches.length) onOpenTopic(matches[0].topic);
+              }} />
+            {topicQ && (
+              <button className="clear" onClick={() => setTopicQ("")} aria-label="Clear">×</button>
+            )}
+          </div>
+
           <div className="sn-topicrow">
-            {shortcuts.map((t, i) => (
-              <button className={"sn-topicpill" + (i === 0 ? " hot" : "")} key={t.topic}
+            {(topicQ ? matches : shortcuts).map((t, i) => (
+              <button className={"sn-topicpill" + (!topicQ && i === 0 ? " hot" : "")} key={t.topic}
                 onClick={() => onOpenTopic(t.topic)}>
                 {t.topic}<span className="ct">{t.count}</span>
               </button>
             ))}
-            <button className="sn-topicpill all" onClick={onAllTopics}>All topics ›</button>
+            {topicQ && matches.length === 0 && (
+              <span className="sn-note" style={{ marginTop: 2 }}>
+                No topic matches that yet.
+              </span>
+            )}
+            {!topicQ && (
+              <button className="sn-topicpill all" onClick={onAllTopics}>All topics ›</button>
+            )}
           </div>
         </>
       )}
@@ -2999,7 +3041,8 @@ function App() {
 
   useEffect(() => {
     Promise.all([loadNotes(), loadDevotions(), loadTopics(), loadPlan()]).then(([n, d, t, p]) => {
-      setNotes(n); setDevotions(d); setTopics(t); setPlan(p); setLoading(false);
+      setNotes(n); setDevotions(d); setTopics(t); setPlan(p);
+      setLoading(false);
     });
     requestPersistence();
   }, []);
