@@ -678,6 +678,8 @@ function GlobalStyle() {
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
       /* topic search — small, sits above the shortcut pills */
+      .sn-drawer-item.foot { margin-top:auto; border-top:1px solid var(--rule-soft);
+        border-radius:0; font-size:13.5px; color:var(--ink-3); font-weight:500; padding-top:16px; }
       .sn-topicsearch { display:flex; align-items:center; gap:9px; background:var(--card);
         border:1px solid var(--rule); border-radius:100px; padding:0 14px; margin-bottom:11px;
         min-height:42px; transition:border-color .15s; }
@@ -3116,6 +3118,7 @@ function Drawer({ open, tab, onClose, onGo, counts }) {
     { id: "library",  icon: "📖", label: "Library", count: counts.entries },
     { id: "verses",   icon: "🔎", label: "Verses", count: counts.verses },
     { id: "data",     icon: "⤓", label: "Backup & storage" },
+    { id: "about",    icon: "©", label: "Copyright & about", foot: true },
   ];
 
   return (
