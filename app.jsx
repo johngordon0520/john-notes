@@ -1,7 +1,8 @@
 /* ===============================================================
    John's Notes — offline sermon & devotion notebook
-   Runs entirely on-device. No network calls, no accounts, no keys.
-   Text lives in localStorage; photos live in IndexedDB.
+   Runs entirely on-device. Notes never leave the phone. The only
+   outbound request is a passage lookup, and only if you add your
+   own ESV key in Backup & storage.
    =============================================================== */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -1213,6 +1214,7 @@ function VerseChips({ verses, onChange, label, readOnly, quiet, hideAdd }) {
       {editing !== null && list[editing] && (
         <div className="sn-gistbox">
           <div className="sn-gist-ref sn-mono">{list[editing].ref}</div>
+          <ScriptureText refStr={list[editing].ref} compact />
           {readOnly ? (
             <div className="sn-gist-read">{list[editing].gist || "No summary yet."}</div>
           ) : (
@@ -2305,10 +2307,25 @@ function parseRef(ref) {
   return { book: m[1], chapter: +m[2], start: +m[3], end: m[4] ? +m[4] : +m[3] };
 }
 
+function TagVersePanel({ refStr, onClose }) {
+  return (
+    <div className="sn-tagpanel">
+      <div className="sn-tagpanel-hd">
+        <span className="sn-mono">{refStr}</span>
+        <button className="sn-link" onClick={onClose}>Done</button>
+      </div>
+      <ScriptureText refStr={refStr} compact />
+      <TopicTags refStr={refStr} />
+    </div>
+  );
+}
+
 function VerseSearch({ entries, onOpen, jumpTo }) {
   const [mode, setMode] = useState(jumpTo?.ref ? "reference" : "topic");
   const [q, setQ] = useState(jumpTo?.ref || "");
   const [browse, setBrowse] = useState(false);
+  const [tagPicker, setTagPicker] = useState(false);
+  const [tagging, setTagging] = useState(null);      // ref being tagged
   const [openTopic, setOpenTopic] = useState(jumpTo?.topic || null);
   const [expanded, setExpanded] = useState(null);
   const { topics, setTopicsFor } = React.useContext(TopicsContext);
@@ -2424,11 +2441,22 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
                   if (!cur.includes(openTopic)) setTopicsFor(ref, [...cur, openTopic]);
                 }} />
             )}
+            {tagging && <TagVersePanel refStr={tagging} onClose={() => setTagging(null)} />}
           </>
         ) : (
           <>
+            {tagPicker && (
+              <VersePicker onClose={() => setTagPicker(false)} onPick={(ref) => setTagging(ref)} />
+            )}
             <input className="sn-input" placeholder="Find a topic, e.g. patience"
               value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 14 }} />
+
+            <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm"
+              style={{ marginBottom: 16 }} onClick={() => setTagPicker(true)}>
+              Tag a verse by topic
+            </button>
+
+            {tagging && <TagVersePanel refStr={tagging} onClose={() => setTagging(null)} />}
 
             {shownTopics.length === 0 ? (
               <div className="sn-empty">
@@ -2469,13 +2497,26 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
         <button className="on">By reference</button>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <input className="sn-input sn-mono" style={{ flex: 1, fontSize: 14, minWidth: 0 }}
-          placeholder="Filter, e.g. Rom 8" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className="sn-btn sn-btn-primary" onClick={() => setBrowse(true)}>Browse</button>
+      <div className="sn-versefind">
+        <span className="ico">⌕</span>
+        <input placeholder="Find a verse, e.g. Rom 8" value={q}
+          onChange={(e) => setQ(e.target.value)} />
+        {q && <button className="clear" onClick={() => setQ("")}>×</button>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ flex: 1 }}
+          onClick={() => setBrowse(true)}>Browse books</button>
+        <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 1 }}
+          onClick={() => setTagPicker(true)}>Tag a verse</button>
       </div>
 
       {browse && <VersePicker onClose={() => setBrowse(false)} onPick={(ref) => setQ(ref)} />}
+      {tagPicker && (
+        <VersePicker onClose={() => setTagPicker(false)}
+          onPick={(ref) => setTagging(ref)} />
+      )}
+      {tagging && <TagVersePanel refStr={tagging} onClose={() => setTagging(null)} />}
 
       {results.length === 0 ? (
         <div className="sn-empty">
@@ -2533,6 +2574,220 @@ function topTopics(topics, limit = 6) {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, limit)
     .map(([topic, count]) => ({ topic, count }));
+}
+
+/* ===============================================================
+   ESV TEXT (optional, your own key)
+   ---------------------------------------------------------------
+   Crossway's terms allow free non-commercial use but cap local
+   storage at 500 verses, so the cache here is bounded and evicts
+   the oldest passages rather than growing forever. The key belongs
+   to you; a proxy URL is offered because a key in client code is
+   readable by anyone who opens the page.
+   =============================================================== */
+const ESV_VERSE_CAP = 450;          // stay under Crossway's 500
+
+const ScriptureContext = React.createContext({ ready: false, get: null });
+
+const defaultScripture = () => ({ apiKey: "", proxyUrl: "", autoFetch: true });
+
+async function loadScripture() {
+  try {
+    const r = await storage.get("esv-settings");
+    return r ? { ...defaultScripture(), ...JSON.parse(r.value) } : defaultScripture();
+  } catch { return defaultScripture(); }
+}
+async function saveScripture(cfg) {
+  try { await storage.set("esv-settings", JSON.stringify(cfg)); return true; }
+  catch { return false; }
+}
+
+let esvCache = null;
+async function esvCacheLoad() {
+  if (esvCache) return esvCache;
+  try {
+    const r = await storage.get("esv-cache");
+    esvCache = r ? JSON.parse(r.value) : {};
+  } catch { esvCache = {}; }
+  return esvCache;
+}
+async function esvCacheWrite(cache) {
+  esvCache = cache;
+  try { await storage.set("esv-cache", JSON.stringify(cache)); } catch {}
+}
+function cacheVerseCount(cache) {
+  return Object.values(cache).reduce((n, e) => n + (e.verses || 1), 0);
+}
+async function esvCachePut(ref, entry) {
+  const cache = { ...(await esvCacheLoad()) };
+  cache[ref] = { ...entry, at: Date.now() };
+  /* Evict oldest until we're back under the cap */
+  let refs = Object.entries(cache).sort((a, b) => a[1].at - b[1].at);
+  while (cacheVerseCount(cache) > ESV_VERSE_CAP && refs.length > 1) {
+    delete cache[refs[0][0]];
+    refs = refs.slice(1);
+  }
+  await esvCacheWrite(cache);
+}
+async function esvCacheClear() { await esvCacheWrite({}); }
+
+/* Rough verse count so the cap means something */
+function refVerseCount(ref) {
+  const p = parseReading(ref);
+  if (!p) return 1;
+  return Math.max(1, p.end - p.start + 1);
+}
+
+async function fetchESV(ref, cfg) {
+  const params = new URLSearchParams({
+    q: ref,
+    "include-headings": "false",
+    "include-footnotes": "false",
+    "include-verse-numbers": "true",
+    "include-short-copyright": "false",
+    "include-passage-references": "false",
+  });
+  const url = cfg.proxyUrl
+    ? `${cfg.proxyUrl.replace(/\/$/, "")}/esv?${params}`
+    : `https://api.esv.org/v3/passage/text/?${params}`;
+  const headers = cfg.proxyUrl ? {} : { Authorization: `Token ${cfg.apiKey}` };
+
+  const res = await fetch(url, { headers });
+  if (res.status === 401) throw new Error("Key rejected — check it in Backup & storage.");
+  if (!res.ok) throw new Error(`ESV returned ${res.status}`);
+  const data = await res.json();
+  const text = (data.passages || []).join("\n").trim();
+  if (!text) throw new Error("No passage came back for that reference.");
+  return { text, verses: refVerseCount(ref) };
+}
+
+async function getScripture(ref, cfg) {
+  const cache = await esvCacheLoad();
+  if (cache[ref]) return { ...cache[ref], cached: true };
+  if (!cfg.apiKey && !cfg.proxyUrl) throw new Error("No ESV key set up yet.");
+  const result = await fetchESV(ref, cfg);
+  await esvCachePut(ref, result);
+  return { ...result, cached: false };
+}
+
+/* Shows the passage text, on demand or automatically */
+function ScriptureText({ refStr, compact }) {
+  const cfg = React.useContext(ScriptureContext);
+  const [state, setState] = useState({ status: "idle" });
+
+  const load = async () => {
+    setState({ status: "loading" });
+    try { setState({ status: "ok", ...(await getScripture(refStr, cfg)) }); }
+    catch (e) { setState({ status: "error", message: e.message }); }
+  };
+
+  useEffect(() => {
+    let alive = true;
+    esvCacheLoad().then((c) => {
+      if (!alive) return;
+      if (c[refStr]) setState({ status: "ok", ...c[refStr], cached: true });
+      else if (cfg.autoFetch && (cfg.apiKey || cfg.proxyUrl)) load();
+      else setState({ status: "idle" });
+    });
+    return () => { alive = false; };
+  }, [refStr, cfg.apiKey, cfg.proxyUrl, cfg.autoFetch]);
+
+  if (!cfg.apiKey && !cfg.proxyUrl) return null;
+  if (state.status === "idle")
+    return <button className="sn-loadtext" onClick={load}>Show ESV text</button>;
+  if (state.status === "loading")
+    return <div className="sn-scripture dim">Loading…</div>;
+  if (state.status === "error")
+    return <div className="sn-scripture err">{state.message}{" "}
+      <button className="sn-loadtext" onClick={load}>Retry</button></div>;
+
+  return (
+    <div className={"sn-scripture" + (compact ? " compact" : "")}>
+      {state.text}
+      <div className="sn-scripture-attr">
+        ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+      </div>
+    </div>
+  );
+}
+
+/* ===============================================================
+   COPYRIGHT & ABOUT
+   ---------------------------------------------------------------
+   Crossway requires three things of anyone using the ESV API: the
+   letters "ESV" with each quotation, a link to esv.org on every
+   page showing the text, and the full notice on a copyright page.
+   The first two live in ScriptureText; this is the third.
+   =============================================================== */
+function About({ scripture }) {
+  const usingEsv = !!(scripture.apiKey || scripture.proxyUrl);
+
+  return (
+    <div className="sn-scroll">
+      <div className="sn-secttl" style={{ marginTop: 0 }}>Scripture copyright</div>
+
+      {usingEsv ? (
+        <>
+          <div className="sn-legal">
+            Scripture quotations are from the ESV® Bible (The Holy Bible, English
+            Standard Version®), © 2001 by Crossway, a publishing ministry of Good
+            News Publishers. Used by permission. All rights reserved.
+          </div>
+          <div className="sn-legal">
+            The ESV text may not be quoted in any publication made available to the
+            public by a Creative Commons license. The ESV may not be translated into
+            any other language.
+          </div>
+          <div className="sn-legal">
+            "ESV" and "English Standard Version" are registered trademarks of Crossway.
+            Use of either trademark requires the permission of Crossway.
+          </div>
+        </>
+      ) : (
+        <div className="sn-legal">
+          No Bible text is stored or displayed in this app. Verse references are your
+          own notation; any summaries are your own words. If you connect an ESV key
+          under Backup &amp; storage, Crossway's copyright notice will appear here
+          and with every passage.
+        </div>
+      )}
+
+      <div className="sn-secttl">Verse data</div>
+      <div className="sn-legal">
+        Book names and the chapter and verse counts used by the reference picker
+        follow the standard Protestant canon. These are facts of structure, not
+        text, and no translation is reproduced.
+      </div>
+
+      <div className="sn-secttl">Your notes</div>
+      <div className="sn-legal">
+        Everything you write stays on this device. There is no account, no server
+        and no analytics. Nothing is transmitted anywhere{usingEsv
+          ? ", apart from the passage references sent to Crossway when you request text."
+          : "."}
+      </div>
+      <div className="sn-legal">
+        Because the data lives only here, deleting the app or clearing this browser's
+        storage removes it permanently. Export a backup from Backup &amp; storage and
+        keep it somewhere safe.
+      </div>
+
+      <div className="sn-secttl">Typefaces</div>
+      <div className="sn-legal">
+        Set in Lora, Inter and IBM Plex Mono, all licensed under the SIL Open Font
+        License.
+      </div>
+
+      <div className="sn-about-ft">
+        {usingEsv && (
+          <div className="sn-esvline">
+            ESV text via <a href="https://www.esv.org" target="_blank" rel="noreferrer">www.esv.org</a>
+          </div>
+        )}
+        John's Notes · built for one reader
+      </div>
+    </div>
+  );
 }
 
 /* ===============================================================
@@ -2610,6 +2865,8 @@ function PlanSetup({ plan, onSave, onCancel }) {
 
 function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
   const [showLog, setShowLog] = useState(false);
+  const [openLog, setOpenLog] = useState(null);
+  const { topics } = React.useContext(TopicsContext);
   const coverage = plan.coverage || {};
   const stats = useMemo(() => coverageStats(coverage, plan.scopeId), [coverage, plan.scopeId]);
   const pace = paceStatus(plan, stats);
@@ -2686,14 +2943,29 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
       {(plan.log || []).length > 0 && (
         <div className="sn-loglist">
           <div className="sn-sublbl" style={{ marginTop: 12 }}>Recently read</div>
-          {[...plan.log].slice(-5).reverse().map((r, i) => (
-            <div className="sn-logrow" key={i}>
-              <span className="sn-mono">{r.ref}</span>
-              <span className="dt">
-                {new Date(r.on + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-              </span>
-            </div>
-          ))}
+          {[...plan.log].slice(-5).reverse().map((r, i) => {
+            const key = r.ref + i;
+            const open = openLog === key;
+            const tagged = (topics[r.ref] || []).length;
+            return (
+              <div key={key}>
+                <div className="sn-logrow" onClick={() => setOpenLog(open ? null : key)}>
+                  <span className="sn-mono">{r.ref}</span>
+                  {tagged > 0 && <span className="sn-logtags">{tagged} tag{tagged > 1 ? "s" : ""}</span>}
+                  <span className="dt">
+                    {new Date(r.on + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </span>
+                  <span className="chev">{open ? "−" : "+"}</span>
+                </div>
+                {open && (
+                  <div className="sn-logopen">
+                    <ScriptureText refStr={r.ref} compact />
+                    <TopicTags refStr={r.ref} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2701,7 +2973,7 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
 }
 
 function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
-                onNew, onOpen, onOpenTopic, onAllTopics }) {
+                onNew, onOpen, onOpenTopic, onAllTopics, onAbout }) {
   const [editingPlan, setEditingPlan] = useState(false);
   const [topicQ, setTopicQ] = useState("");
   const shortcuts = useMemo(() => topTopics(topics, 6), [topics]);
@@ -2827,6 +3099,8 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
           ))}
         </>
       )}
+
+      <button className="sn-footlink" onClick={onAbout}>Copyright &amp; about</button>
     </div>
   );
 }
@@ -2853,7 +3127,8 @@ function Drawer({ open, tab, onClose, onGo, counts }) {
           <button className="sn-x" onClick={onClose}>×</button>
         </div>
         {items.map((it) => (
-          <button key={it.id} className={"sn-drawer-item" + (tab === it.id ? " on" : "")}
+          <button key={it.id}
+            className={"sn-drawer-item" + (tab === it.id ? " on" : "") + (it.foot ? " foot" : "")}
             onClick={() => onGo(it.id)}>
             <span className="ico">{it.icon}</span>
             <span className="lbl">{it.label}</span>
@@ -2872,7 +3147,12 @@ function exportFilename() {
   return `johns-notes-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
-function DataPanel({ notes, devotions, topics, plan, onImport, onFlash }) {
+function DataPanel({ notes, devotions, topics, plan, scripture, onSaveEsv, onImport, onFlash }) {
+  const [esv, setEsvLocal] = useState(scripture);
+  const [esvTesting, setEsvTesting] = useState(false);
+  const [esvResult, setEsvResult] = useState(null);
+  const [esvCached, setEsvCached] = useState(0);
+  useEffect(() => { esvCacheLoad().then((c) => setEsvCached(cacheVerseCount(c))); }, []);
   const [persist, setPersist] = useState({ supported: false, persisted: false });
   const [est, setEst] = useState(null);
   const [pending, setPending] = useState(null);
@@ -2988,6 +3268,73 @@ function DataPanel({ notes, devotions, topics, plan, onImport, onFlash }) {
         </div>
       )}
 
+      <div className="sn-secttl">ESV text (optional)</div>
+      <div className="sn-note" style={{ marginBottom: 12 }}>
+        With your own free key from api.esv.org, passage text appears under any
+        reference. Without one the app works exactly as it does now — references
+        and your own summaries.
+      </div>
+
+      <div className="sn-field">
+        <label className="sn-label">Access key</label>
+        <input className="sn-input sn-mono" type="password" placeholder="Token from api.esv.org"
+          value={esv.apiKey} onChange={(e) => setEsvLocal({ ...esv, apiKey: e.target.value })} />
+        <div className="sn-note warn">
+          A key in the app is readable by anyone who inspects the page, and Crossway
+          forbids sharing it. Fine on your own phone; use a proxy if you ever share this.
+        </div>
+      </div>
+
+      <div className="sn-field">
+        <label className="sn-label">Proxy URL (optional)</label>
+        <input className="sn-input sn-mono" placeholder="https://your-server.com/bible"
+          value={esv.proxyUrl} onChange={(e) => setEsvLocal({ ...esv, proxyUrl: e.target.value })} />
+      </div>
+
+      <label className="sn-check">
+        <input type="checkbox" checked={esv.autoFetch}
+          onChange={(e) => setEsvLocal({ ...esv, autoFetch: e.target.checked })} />
+        Load text automatically when a reference is shown
+      </label>
+
+      <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
+        <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} disabled={esvTesting}
+          onClick={async () => {
+            setEsvTesting(true); setEsvResult(null);
+            try {
+              const r = await getScripture("John 11:35", esv);
+              setEsvResult({ ok: true, text: r.text.slice(0, 90) });
+            } catch (err) { setEsvResult({ ok: false, text: err.message }); }
+            setEsvTesting(false);
+          }}>
+          {esvTesting ? "Testing…" : "Test key"}
+        </button>
+        <button className="sn-btn sn-btn-accent" style={{ flex: 1 }}
+          onClick={async () => { await onSaveEsv(esv); onFlash("ESV settings saved"); }}>
+          Save
+        </button>
+      </div>
+
+      {esvResult && (
+        <div className={"sn-testres " + (esvResult.ok ? "ok" : "bad")} style={{ marginTop: 10 }}>
+          {esvResult.ok ? `Working — returned: ${esvResult.text}` : esvResult.text}
+        </div>
+      )}
+
+      <div className="sn-statrow" style={{ marginTop: 10 }}>
+        <span>Passage cache</span>
+        <span className="sn-pill">{esvCached} / {ESV_VERSE_CAP} verses</span>
+      </div>
+      <div className="sn-note" style={{ marginBottom: 4 }}>
+        Crossway caps local storage at 500 verses, so the oldest passages drop off
+        automatically.
+        {esvCached > 0 && (
+          <> <button className="sn-loadtext" onClick={async () => {
+            await esvCacheClear(); setEsvCached(0); onFlash("Passage cache cleared");
+          }}>Clear now</button></>
+        )}
+      </div>
+
       <div className="sn-secttl">Storage</div>
       <div className="sn-statrow">
         <span>Protected from cleanup</span>
@@ -3030,6 +3377,7 @@ function App() {
   const [devotions, setDevotions] = useState([]);
   const [topics, setTopics] = useState({});
   const [plan, setPlan] = useState(null);
+  const [scripture, setScripture] = useState(defaultScripture());
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("home");
   const [drawer, setDrawer] = useState(false);
@@ -3040,6 +3388,7 @@ function App() {
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
+    loadScripture().then(setScripture);
     Promise.all([loadNotes(), loadDevotions(), loadTopics(), loadPlan()]).then(([n, d, t, p]) => {
       setNotes(n); setDevotions(d); setTopics(t); setPlan(p);
       setLoading(false);
@@ -3057,6 +3406,8 @@ function App() {
     await saveTopics(next);
   };
   const topicsValue = useMemo(() => ({ topics, setTopicsFor }), [topics]);
+
+  const saveEsv = async (cfg) => { setScripture(cfg); await saveScripture(cfg); };
 
   const entries = useMemo(
     () => [...notes.map((n) => ({ ...n, kind: "sermon" })), ...devotions],
@@ -3203,10 +3554,12 @@ function App() {
     library: viewing ? (viewing.kind === "devotion" ? "Devotion" : "Sermon") : "Library",
     verses: "Verses",
     data: "Backup & storage",
+    about: "Copyright & about",
   };
 
   return (
     <TopicsContext.Provider value={topicsValue}>
+    <ScriptureContext.Provider value={scripture}>
     <div className="sn-root">
       <GlobalStyle />
 
@@ -3224,7 +3577,7 @@ function App() {
         counts={{ entries: entries.length, verses: verseCount }} />
 
       {tab === "home" && (
-        <Home entries={entries} plan={plan} topics={topics}
+        <Home entries={entries} plan={plan} topics={topics} onAbout={() => go("about")}
           onSetPlan={choosePlan} onLogReading={logReading}
           onDevotionFrom={devotionFromDay} onNew={go}
           onOpen={(e) => { setViewing(e); setTab("library"); }}
@@ -3262,13 +3615,17 @@ function App() {
           onOpen={(e) => { setViewing(e); setTab("library"); }} />
       )}
 
+      {tab === "about" && <About scripture={scripture} />}
+
       {tab === "data" && (
         <DataPanel notes={notes} devotions={devotions} topics={topics} plan={plan}
+          scripture={scripture} onSaveEsv={saveEsv}
           onImport={handleImport} onFlash={flash} />
       )}
 
       {toast && <div className="sn-toast">{toast}</div>}
     </div>
+    </ScriptureContext.Provider>
     </TopicsContext.Provider>
   );
 }

@@ -3,7 +3,7 @@
    served from the cache, so the app opens with no connection at all.
    Bump CACHE_VERSION whenever you change app.jsx or index.html. */
 
-const CACHE_VERSION = "johns-notes-v9";
+const CACHE_VERSION = "johns-notes-v10";
 
 const PRECACHE = [
   "./",
@@ -45,6 +45,11 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  // Scripture lookups must always hit the network — never serve a cached
+  // passage response, and never cache one (Crossway caps local storage,
+  // and the app manages its own bounded verse cache).
+  if (event.request.url.includes("api.esv.org")) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
