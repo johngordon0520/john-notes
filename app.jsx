@@ -1,8 +1,8 @@
 /* ===============================================================
    John's Notes — offline sermon & devotion notebook
    Runs entirely on-device. Notes never leave the phone. The only
-   outbound request is a passage lookup, and only if you add your
-   own ESV key in Backup & storage.
+   outbound requests are ESV passage and search lookups, and only
+   if you add your own key in Backup & storage.
    =============================================================== */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -599,25 +599,13 @@ function GlobalStyle() {
         letter-spacing:0; text-transform:none; }
 
       /* ---------- home ---------- */
-      .sn-greet { padding:6px 0 20px; border-bottom:1px solid var(--rule); margin-bottom:22px; }
+      .sn-greet { padding:4px 0 18px; border-bottom:1px solid var(--rule); margin-bottom:18px; }
       .sn-greet-hi { font-family:'Lora',Georgia,serif; font-size:27px; font-weight:500;
         letter-spacing:-.015em; line-height:1.2; }
       .sn-greet-date { font-size:12.5px; color:var(--ink-3); margin-top:5px;
         letter-spacing:.02em; }
 
       /* The two things you actually came here to do */
-      .sn-startrow { display:flex; flex-direction:column; gap:1px; background:var(--rule-soft);
-        border:1px solid var(--rule); border-radius:var(--r); overflow:hidden; margin-bottom:4px; }
-      .sn-start { display:flex; align-items:center; gap:14px; background:var(--card);
-        border:none; padding:17px 16px; cursor:pointer; text-align:left;
-        font-family:'Inter',sans-serif; min-height:64px; }
-      .sn-start .ico { font-size:17px; width:26px; text-align:center; flex-shrink:0; }
-      .sn-start .nm { font-size:16px; font-weight:600; display:block; }
-      .sn-start .sub { font-size:12.5px; color:var(--ink-3); display:block; margin-top:1px; }
-      .sn-start.sermon .ico { color:var(--accent); }
-      .sn-start.devotion .ico { color:#8A6410; }
-      .sn-start:active { background:var(--accent-wash); }
-
       /* ---------- panels: framed by rules, not boxes ---------- */
       .sn-panel { background:var(--card); border:1px solid var(--rule); border-radius:var(--r);
         padding:16px; margin-bottom:4px; }
@@ -678,8 +666,6 @@ function GlobalStyle() {
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
       /* topic search — small, sits above the shortcut pills */
-      .sn-drawer-item.foot { margin-top:auto; border-top:1px solid var(--rule-soft);
-        border-radius:0; font-size:13.5px; color:var(--ink-3); font-weight:500; padding-top:16px; }
       .sn-topicsearch { display:flex; align-items:center; gap:9px; background:var(--card);
         border:1px solid var(--rule); border-radius:100px; padding:0 14px; margin-bottom:11px;
         min-height:42px; transition:border-color .15s; }
@@ -1807,6 +1793,13 @@ function Library({ entries, onOpen }) {
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
+
+  /* Curated passages for the open topic, minus what you already hold */
+  const taggedRefs = useMemo(() => new Set(Object.keys(topics)), [topics]);
+  const suggestions = useMemo(
+    () => (openTopic ? suggestForTopic(openTopic, taggedRefs) : []),
+    [openTopic, taggedRefs]
+  );
     return entries.filter((e) => {
       if (filter !== "all" && (e.kind || "sermon") !== filter) return false;
       if (!query) return true;
@@ -2368,6 +2361,13 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
 
   const query = q.trim().toLowerCase();
 
+  /* Curated passages for the open topic, minus what you already hold */
+  const taggedRefs = useMemo(() => new Set(Object.keys(topics)), [topics]);
+  const suggestions = useMemo(
+    () => (openTopic ? suggestForTopic(openTopic, taggedRefs) : []),
+    [openTopic, taggedRefs]
+  );
+
   const VerseRow = ({ e, showTopics }) => (
     <div key={e.ref}>
       <div className="sn-freq" onClick={() => setExpanded(expanded === e.ref ? null : e.ref)}>
@@ -2436,6 +2436,29 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
               const e = byRef[ref] || { ref, gists: [], notes: [] };
               return <VerseRow key={ref} e={e} />;
             })}
+
+            <div className="sn-secttl">Find more on {openTopic}</div>
+            <ScriptureSearch initialQuery={openTopic} tagTopic={openTopic} taggedRefs={taggedRefs}
+              onTag={(ref) => setTopicsFor(ref, [...(topics[ref] || []), openTopic])} />
+
+            {suggestions.length > 0 && (
+              <>
+                <div className="sn-secttl">Well-known passages on {openTopic}</div>
+                <div className="sn-note" style={{ marginTop: -4, marginBottom: 10 }}>
+                  Well-known texts on this theme. Add any that belong in your library.
+                </div>
+                {suggestions.map((ref) => (
+                  <div className="sn-suggest" key={ref}>
+                    <span className="sn-mono">{ref}</span>
+                    <button className="sn-suggest-read" onClick={() => setTagging(ref)}>Look</button>
+                    <button className="sn-suggest-add"
+                      onClick={() => setTopicsFor(ref, [...(topics[ref] || []), openTopic])}>
+                      + Add
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
             {browse && (
               <VersePicker onClose={() => setBrowse(false)}
                 onPick={(ref) => {
@@ -2460,14 +2483,28 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
 
             {tagging && <TagVersePanel refStr={tagging} onClose={() => setTagging(null)} />}
 
-            {shownTopics.length === 0 ? (
+            {query && searchTopical(query).some((h) => !topicIndex.some((t) => t.topic === h.topic)) && (
+              <>
+                <div className="sn-secttl">Start a topic</div>
+                {searchTopical(query)
+                  .filter((h) => !topicIndex.some((t) => t.topic === h.topic))
+                  .map((h) => (
+                    <button className="sn-newtopic" key={h.topic} onClick={() => setOpenTopic(h.topic)}>
+                      <span className="nm">{h.topic}</span>
+                      <span className="ct">{h.refs.length} passages ready</span>
+                    </button>
+                  ))}
+              </>
+            )}
+
+            {shownTopics.length === 0 && !query && (
               <div className="sn-empty">
                 <div className="ico">🏷</div>
-                {topicIndex.length === 0
-                  ? "No topics yet. Tap any verse in a note to tag it."
-                  : "No topic matches that."}
+                No topics yet. Tap any verse in a note to tag it.
               </div>
-            ) : (
+            )}
+
+            {shownTopics.length > 0 && (
               <div className="sn-topic-grid">
                 {shownTopics.map((t) => (
                   <button className="sn-topic-card" key={t.topic} onClick={() => setOpenTopic(t.topic)}>
@@ -2533,6 +2570,9 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
           {results.map((e) => <VerseRow key={e.ref} e={e} showTopics />)}
         </>
       )}
+
+      <div className="sn-secttl">Search the whole Bible</div>
+      <ScriptureSearch taggedRefs={taggedRefs} onTag={(ref) => setTagging(ref)} />
     </div>
   );
 }
@@ -2713,6 +2753,306 @@ function ScriptureText({ refStr, compact }) {
   );
 }
 
+/* ---------------------------------------------------------------
+   Scripture search — Crossway's /v3/passage/search/ endpoint.
+   Results are held in memory only and never written to the verse
+   cache: search snippets would otherwise eat into the 500-verse
+   storage limit for passages you actually chose to keep.
+--------------------------------------------------------------- */
+async function searchESV(query, cfg, page = 1) {
+  const params = new URLSearchParams({ q: query, "page-size": "20", page: String(page) });
+  const url = cfg.proxyUrl
+    ? `${cfg.proxyUrl.replace(/\/$/, "")}/search?${params}`
+    : `https://api.esv.org/v3/passage/search/?${params}`;
+  const headers = cfg.proxyUrl ? {} : { Authorization: `Token ${cfg.apiKey}` };
+
+  const res = await fetch(url, { headers });
+  if (res.status === 401) throw new Error("Key rejected — check it in Backup & storage.");
+  if (!res.ok) throw new Error(`ESV search returned ${res.status}`);
+  const data = await res.json();
+  return {
+    total: data.total_results || 0,
+    page: data.page || page,
+    pages: data.total_pages || 1,
+    results: (data.results || []).map((r) => ({ ref: r.reference, snippet: r.content })),
+  };
+}
+
+/* ===============================================================
+   TOPICAL INDEX
+   ---------------------------------------------------------------
+   A starting library of well-known passages by theme, so a topic
+   can suggest verses you haven't tagged yet. Curated and bundled,
+   not fetched — it works offline and costs nothing. It's a prompt,
+   never a replacement for your own reading: every suggestion has
+   to be accepted before it enters your library.
+   =============================================================== */
+const TOPICAL = {
+  patience: ["Romans 8:25", "James 5:7-8", "Galatians 5:22-23", "Isaiah 40:31", "Psalms 27:14", "Romans 12:12"],
+  anxiety: ["Philippians 4:6-7", "1 Peter 5:6-7", "Matthew 6:25-34", "Psalms 94:19", "John 14:27", "Isaiah 41:10"],
+  fear: ["Isaiah 41:10", "Psalms 23:4", "Psalms 27:1", "2 Timothy 1:7", "Joshua 1:9", "Psalms 56:3"],
+  grief: ["Psalms 34:18", "Matthew 5:4", "Revelation 21:4", "2 Corinthians 1:3-4", "Psalms 147:3", "John 11:33-35"],
+  forgiveness: ["Ephesians 4:32", "Colossians 3:13", "Matthew 6:14-15", "1 John 1:9", "Psalms 103:12", "Luke 23:34"],
+  guidance: ["Proverbs 3:5-6", "Psalms 32:8", "Psalms 119:105", "James 1:5", "Isaiah 30:21", "Proverbs 16:9"],
+  gratitude: ["1 Thessalonians 5:18", "Psalms 100:4", "Colossians 3:15-17", "Psalms 103:1-5", "Philippians 4:6"],
+  hope: ["Romans 15:13", "Lamentations 3:22-24", "Hebrews 6:19", "Romans 5:3-5", "Psalms 42:11", "1 Peter 1:3"],
+  temptation: ["1 Corinthians 10:13", "James 1:13-15", "Hebrews 4:15-16", "Matthew 26:41", "Psalms 119:11"],
+  provision: ["Philippians 4:19", "Matthew 6:33", "Psalms 23:1", "Matthew 7:11", "2 Corinthians 9:8"],
+  healing: ["James 5:14-15", "Psalms 103:2-3", "Isaiah 53:5", "Jeremiah 17:14", "Matthew 11:28-30"],
+  wisdom: ["James 1:5", "Proverbs 1:7", "Proverbs 4:6-7", "Colossians 2:2-3", "Psalms 111:10", "James 3:17"],
+  anger: ["James 1:19-20", "Ephesians 4:26-27", "Proverbs 15:1", "Proverbs 29:11", "Colossians 3:8"],
+  contentment: ["Philippians 4:11-13", "1 Timothy 6:6-8", "Hebrews 13:5", "Psalms 16:5-6", "Ecclesiastes 5:10"],
+  humility: ["Philippians 2:3-8", "James 4:6-10", "Micah 6:8", "Proverbs 11:2", "1 Peter 5:5-6"],
+  marriage: ["Ephesians 5:22-33", "1 Corinthians 13:4-7", "Genesis 2:24", "Colossians 3:18-19", "Proverbs 31:10-12"],
+  parenting: ["Proverbs 22:6", "Ephesians 6:4", "Deuteronomy 6:6-7", "Psalms 127:3-5", "Colossians 3:21"],
+  work: ["Colossians 3:23-24", "Proverbs 16:3", "Ecclesiastes 9:10", "1 Corinthians 10:31", "2 Thessalonians 3:10"],
+  money: ["1 Timothy 6:9-10", "Proverbs 3:9-10", "Matthew 6:19-21", "Luke 16:13", "Proverbs 22:7"],
+  rest: ["Matthew 11:28-30", "Psalms 23:2-3", "Exodus 20:8-11", "Hebrews 4:9-11", "Mark 6:31"],
+  doubt: ["Mark 9:24", "James 1:6-8", "John 20:27-29", "Jude 22", "Psalms 73:16-17"],
+  suffering: ["Romans 8:18", "Romans 8:28", "1 Peter 4:12-13", "2 Corinthians 4:16-18", "James 1:2-4", "Psalms 34:19"],
+  joy: ["Nehemiah 8:10", "Psalms 16:11", "John 15:11", "Philippians 4:4", "Romans 15:13", "James 1:2"],
+  peace: ["John 14:27", "Philippians 4:6-7", "Isaiah 26:3", "Colossians 3:15", "Romans 5:1", "Psalms 29:11"],
+  love: ["1 Corinthians 13:4-7", "1 John 4:7-12", "John 15:12-13", "Romans 5:8", "1 John 3:16"],
+  courage: ["Joshua 1:9", "Deuteronomy 31:6", "1 Corinthians 16:13", "Psalms 31:24", "2 Timothy 1:7"],
+  endurance: ["Hebrews 12:1-2", "James 1:12", "Galatians 6:9", "Romans 5:3-4", "2 Timothy 4:7"],
+  repentance: ["1 John 1:9", "Acts 3:19", "Psalms 51:10-12", "2 Chronicles 7:14", "Joel 2:12-13"],
+  prayer: ["Philippians 4:6-7", "1 Thessalonians 5:16-18", "Matthew 6:9-13", "James 5:16", "Luke 18:1"],
+  generosity: ["2 Corinthians 9:6-8", "Proverbs 11:24-25", "Acts 20:35", "Luke 6:38", "1 Timothy 6:17-19"],
+  friendship: ["Proverbs 17:17", "Proverbs 27:17", "Ecclesiastes 4:9-12", "John 15:13", "Proverbs 18:24"],
+  purity: ["Psalms 119:9-11", "Matthew 5:8", "1 Thessalonians 4:3-5", "Philippians 4:8", "1 Corinthians 6:19-20"],
+  justice: ["Micah 6:8", "Isaiah 1:17", "Proverbs 31:8-9", "Amos 5:24", "Psalms 82:3-4"],
+  mercy: ["Lamentations 3:22-23", "Titus 3:5", "Matthew 5:7", "Ephesians 2:4-5", "Psalms 103:8"],
+  identity: ["Ephesians 2:10", "1 Peter 2:9", "2 Corinthians 5:17", "Galatians 2:20", "Psalms 139:13-14"],
+  assurance: ["Romans 8:38-39", "John 10:28-29", "1 John 5:13", "Philippians 1:6", "2 Timothy 1:12"],
+  trust: ["Proverbs 3:5-6", "Psalms 56:3-4", "Isaiah 26:3-4", "Jeremiah 17:7-8", "Psalms 20:7"],
+  comfort: ["2 Corinthians 1:3-4", "Psalms 23:4", "Matthew 5:4", "Isaiah 66:13", "Psalms 119:50"],
+  grace: ["Ephesians 2:8-9", "2 Corinthians 12:9", "Titus 2:11-12", "Romans 5:20-21", "Hebrews 4:16"],
+  discipline: ["Hebrews 12:5-11", "Proverbs 3:11-12", "1 Corinthians 9:24-27", "2 Timothy 1:7", "Titus 2:11-12"],
+};
+
+/* Suggestions for a topic: exact match first, then near-matches on the
+   topic name, minus anything already in your library. */
+function suggestForTopic(topic, taggedRefs) {
+  const t = normTopic(topic);
+  const direct = TOPICAL[t] || [];
+  let pool = [...direct];
+  if (pool.length < 4) {
+    Object.entries(TOPICAL).forEach(([key, refs]) => {
+      if (key !== t && (key.includes(t) || t.includes(key))) pool.push(...refs);
+    });
+  }
+  return [...new Set(pool)].filter((r) => !taggedRefs.has(r)).slice(0, 8);
+}
+
+/* Free-text search across the topical index */
+function searchTopical(query) {
+  const q = normTopic(query);
+  if (!q) return [];
+  const hits = [];
+  Object.entries(TOPICAL).forEach(([topic, refs]) => {
+    if (topic.includes(q) || q.includes(topic)) hits.push({ topic, refs });
+  });
+  return hits.slice(0, 4);
+}
+
+/* Word search across the whole ESV, with one-tap tagging of any hit */
+function ScriptureSearch({ initialQuery, tagTopic, onTag, taggedRefs }) {
+  const cfg = React.useContext(ScriptureContext);
+  const [q, setQ] = useState(initialQuery || "");
+  const [state, setState] = useState({ status: "idle" });
+  const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
+
+  const run = async (page = 1) => {
+    const query = q.trim();
+    if (!query) return;
+    setState({ status: "loading" });
+    try {
+      const r = await searchESV(query, cfg, page);
+      setState({ status: "ok", ...r, query });
+    } catch (e) {
+      setState({ status: "error", message: e.message });
+    }
+  };
+
+  if (!hasKey) {
+    return (
+      <div className="sn-callout">
+        Word search needs an ESV key — add one under Backup &amp; storage and you can
+        search the whole Bible for a phrase, then tag what you find.
+      </div>
+    );
+  }
+
+  return (
+    <div className="sn-esvsearch">
+      <div className="sn-versefind">
+        <span className="ico">⌕</span>
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder={tagTopic ? `Search the ESV for "${tagTopic}"` : "Search the ESV for a word or phrase"}
+          onKeyDown={(e) => { if (e.key === "Enter") run(1); }} />
+        {q && <button className="clear" onClick={() => { setQ(""); setState({ status: "idle" }); }}>×</button>}
+      </div>
+      <button className="sn-btn sn-btn-accent sn-btn-full sn-btn-sm" onClick={() => run(1)}
+        disabled={!q.trim() || state.status === "loading"}>
+        {state.status === "loading" ? "Searching…" : "Search scripture"}
+      </button>
+
+      {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
+
+      {state.status === "ok" && (
+        <>
+          <div className="sn-secttl">
+            {state.total} result{state.total === 1 ? "" : "s"} for "{state.query}"
+          </div>
+          {state.results.map((r) => {
+            const already = taggedRefs.has(r.ref);
+            return (
+              <div className="sn-hit" key={r.ref}>
+                <div className="sn-hit-ref sn-mono">{r.ref}</div>
+                <div className="sn-hit-text sn-serif">{r.snippet}</div>
+                <div className="sn-hit-ft">
+                  {already
+                    ? <span className="sn-hit-have">In your library</span>
+                    : <button className="sn-suggest-add" onClick={() => onTag(r.ref)}>
+                        {tagTopic ? `+ ${tagTopic}` : "+ Tag it"}
+                      </button>}
+                </div>
+              </div>
+            );
+          })}
+          <div className="sn-hit-attr">
+            ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+          </div>
+          {state.pages > 1 && (
+            <div className="sn-hit-pager">
+              <button disabled={state.page <= 1} onClick={() => run(state.page - 1)}>‹ Back</button>
+              <span>{state.page} of {state.pages}</span>
+              <button disabled={state.page >= state.pages} onClick={() => run(state.page + 1)}>More ›</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ===============================================================
+   READER — read the passage in the app, then act on it
+   =============================================================== */
+function Reader({ target, coverage, onMarkRead, onDevotion, onBack }) {
+  const cfg = React.useContext(ScriptureContext);
+  const hasText = !!(cfg.apiKey || cfg.proxyUrl);
+  const chapters = target.chapters || [];
+  const label = target.label || labelChapters(chapters);
+  const done = chapters.every((c) => chapterDone(coverage, c.book, c.ch));
+
+  return (
+    <div className="sn-scroll">
+      <button className="sn-back" onClick={onBack}>‹ Back</button>
+
+      <div className="sn-readhd">
+        <h2 className="sn-serif">{label}</h2>
+        {done && <span className="sn-readdone">Already read</span>}
+      </div>
+
+      {!hasText && (
+        <div className="sn-callout">
+          Add your free ESV key under Backup &amp; storage and the text will appear
+          here. Until then, read in your Bible and use the buttons below.
+        </div>
+      )}
+
+      {hasText && chapters.map((c) => (
+        <div className="sn-readch" key={`${c.book} ${c.ch}`}>
+          <div className="sn-readch-lbl sn-mono">{c.book} {c.ch}</div>
+          <ScriptureText refStr={`${c.book} ${c.ch}`} />
+        </div>
+      ))}
+
+      <div className="sn-readft">
+        <div className="sn-readft-lbl">Finished reading?</div>
+        <button className="sn-btn sn-btn-accent sn-btn-full" onClick={() => onMarkRead(chapters)}>
+          {done ? "Marked as read" : "Mark as read"}
+        </button>
+        <button className="sn-btn sn-btn-ghost sn-btn-full" style={{ marginTop: 9 }}
+          onClick={() => onDevotion(chapters)}>
+          Write a devotion on this
+        </button>
+        <div className="sn-note" style={{ textAlign: "center" }}>
+          Writing a devotion marks it read too.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Daily proverb — a single verse, the same one all day for everyone
+   on that date, chosen by hashing the date across all 915 verses of
+   Proverbs. Crossway has no verse-of-the-day endpoint; their own
+   sample does this with chapter lengths, which the app already has.
+--------------------------------------------------------------- */
+function proverbForToday(dateStr) {
+  const book = bookByName("Proverbs");
+  if (!book) return null;
+
+  const today = dateStr || new Date().toISOString().slice(0, 10);
+
+  /* FNV-1a with an avalanche finish. A weaker hash walks the book one
+     verse per day, since consecutive dates differ by a single character. */
+  let h = 0x811c9dc5;
+  for (let i = 0; i < today.length; i++) {
+    h = (h ^ today.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  h = ((h ^ (h >>> 16)) >>> 0);
+  h = Math.imul(h, 0x7feb352d) >>> 0;
+  h = ((h ^ (h >>> 15)) >>> 0);
+  h = Math.imul(h, 0x846ca68b) >>> 0;
+  h = ((h ^ (h >>> 16)) >>> 0);
+
+  const total = book.verses.reduce((a, b) => a + b, 0);   // 915 verses
+  let n = h % total;
+  for (let ch = 0; ch < book.verses.length; ch++) {
+    if (n < book.verses[ch]) return { book: "Proverbs", ch: ch + 1, verse: n + 1,
+                                      ref: `Proverbs ${ch + 1}:${n + 1}` };
+    n -= book.verses[ch];
+  }
+  return { book: "Proverbs", ch: 1, verse: 1, ref: "Proverbs 1:1" };
+}
+
+function ProverbCard({ coverage, onRead, onOpen }) {
+  const cfg = React.useContext(ScriptureContext);
+  const p = proverbForToday();
+  if (!p) return null;
+
+  const read = rangeTotal(coverage[`${p.book} ${p.ch}`] || [])
+    ? (coverage[`${p.book} ${p.ch}`] || []).some(([a, b]) => p.verse >= a && p.verse <= b)
+    : false;
+  const hasText = !!(cfg.apiKey || cfg.proxyUrl);
+
+  return (
+    <div className="sn-proverb">
+      <div className="sn-proverb-lbl">Proverb for today</div>
+
+      {hasText
+        ? <ScriptureText refStr={p.ref} />
+        : <div className="sn-proverb-noref">
+            Add an ESV key under Backup &amp; storage to see the verse here.
+          </div>}
+
+      <div className="sn-proverb-row">
+        <span className="sn-proverb-ref sn-mono">{p.ref}</span>
+        {read
+          ? <span className="sn-proverb-done">Read ✓</span>
+          : <button className="sn-proverb-mark" onClick={() => onRead(p.ref)}>Mark read</button>}
+        <button className="sn-proverb-open"
+          onClick={() => onOpen([{ book: p.book, ch: p.ch }])}>Whole chapter ›</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===============================================================
    COPYRIGHT & ABOUT
    ---------------------------------------------------------------
@@ -2865,7 +3205,7 @@ function PlanSetup({ plan, onSave, onCancel }) {
   );
 }
 
-function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
+function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom }) {
   const [showLog, setShowLog] = useState(false);
   const [openLog, setOpenLog] = useState(null);
   const { topics } = React.useContext(TopicsContext);
@@ -2919,12 +3259,10 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
             )}
           </div>
           <div className="sn-today-actions">
-            <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 1 }}
-              onClick={() => onQuickRead(`${next.book} ${next.ch}`)}>
-              Read {next.book} {next.ch}
-            </button>
+            <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 2 }}
+              onClick={() => onRead(suggestion)}>Read now</button>
             <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ flex: 1 }}
-              onClick={() => onDevotionFrom(suggestion)}>Write on it</button>
+              onClick={() => onQuickRead(`${next.book} ${next.ch}`)}>Mark read</button>
           </div>
         </>
       ) : (
@@ -2975,7 +3313,7 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onDevotionFrom }) {
 }
 
 function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
-                onNew, onOpen, onOpenTopic, onAllTopics, onAbout }) {
+                onOpen, onOpenTopic, onAllTopics, onAbout, onRead, onMarkChapters }) {
   const [editingPlan, setEditingPlan] = useState(false);
   const [topicQ, setTopicQ] = useState("");
   const shortcuts = useMemo(() => topTopics(topics, 6), [topics]);
@@ -3000,23 +3338,6 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
         <div className="sn-greet-date">{today}</div>
       </div>
 
-      <div className="sn-startrow">
-        <button className="sn-start sermon" onClick={() => onNew("sermon")}>
-          <span className="ico">✎</span>
-          <span>
-            <span className="nm">Sermon notes</span>
-            <span className="sub">Structure it as you listen</span>
-          </span>
-        </button>
-        <button className="sn-start devotion" onClick={() => onNew("devotion")}>
-          <span className="ico">✻</span>
-          <span>
-            <span className="nm">Devotion</span>
-            <span className="sub">Read, reflect, pray</span>
-          </span>
-        </button>
-      </div>
-
       {(!plan || editingPlan) ? (
         <PlanSetup plan={plan}
           onSave={(cfg) => { onSetPlan(cfg); setEditingPlan(false); }}
@@ -3026,8 +3347,11 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
           onSetup={() => setEditingPlan(true)}
           onLog={onLogReading}
           onQuickRead={onLogReading}
+          onRead={onRead}
           onDevotionFrom={onDevotionFrom} />
       )}
+
+      <ProverbCard coverage={plan?.coverage || {}} onRead={onLogReading} onOpen={onRead} />
 
       {allTopics.length > 0 && (
         <>
@@ -3387,6 +3711,7 @@ function App() {
   const [editing, setEditing] = useState(null);
   const [seed, setSeed] = useState(null);        // prefill for a new devotion
   const [jumpTo, setJumpTo] = useState(null);    // topic or ref to open in Verses
+  const [reading, setReading] = useState(null);  // { chapters, label } in the reader
   const [viewing, setViewing] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -3444,16 +3769,46 @@ function App() {
 
   /* One entry point for everything that counts as reading */
   const logReading = async (ref, quiet) => {
-    if (!plan) return;
-    const coverage = addToCoverage(plan.coverage || {}, ref);
-    if (coverage === plan.coverage) return;
+    const base = plan || {
+      scopeId: "all", paced: false, targetDays: null,
+      startDate: new Date().toISOString().slice(0, 10), coverage: {}, log: [],
+    };
+    const coverage = addToCoverage(base.coverage || {}, ref);
     const next = {
-      ...plan,
+      ...base,
       coverage,
-      log: [...(plan.log || []), { ref, on: new Date().toISOString().slice(0, 10) }].slice(-200),
+      log: [...(base.log || []), { ref, on: new Date().toISOString().slice(0, 10) }].slice(-200),
     };
     setPlan(next); await savePlan(next);
     if (!quiet) flash(`${ref} marked read`);
+  };
+
+  /* Reading a chapter counts even if no plan is running — the coverage
+     record is the app's memory of what you've read, plan or not. */
+  const markChapters = async (chapters) => {
+    let base = plan || {
+      scopeId: "all", paced: false, targetDays: null,
+      startDate: new Date().toISOString().slice(0, 10), coverage: {}, log: [],
+    };
+    let coverage = base.coverage || {};
+    const log = [...(base.log || [])];
+    const on = new Date().toISOString().slice(0, 10);
+    chapters.forEach((c) => {
+      const ref = `${c.book} ${c.ch}`;
+      coverage = addToCoverage(coverage, ref);
+      log.push({ ref, on });
+    });
+    const next = { ...base, coverage, log: log.slice(-200) };
+    setPlan(next); await savePlan(next);
+    flash(chapters.length === 1
+      ? `${chapters[0].book} ${chapters[0].ch} marked read`
+      : `${chapters.length} chapters marked read`);
+  };
+
+  const openReader = (chapters) => {
+    setReading({ chapters, label: labelChapters(chapters) });
+    setViewing(null);
+    setTab("read");
   };
 
   const devotionFromDay = (chapters) => {
@@ -3555,6 +3910,7 @@ function App() {
     sermon: editing ? "Edit sermon" : "New sermon",
     devotion: editing ? "Edit devotion" : "New devotion",
     library: viewing ? (viewing.kind === "devotion" ? "Devotion" : "Sermon") : "Library",
+    read: reading?.label || "Reading",
     verses: "Verses",
     data: "Backup & storage",
     about: "Copyright & about",
@@ -3581,8 +3937,9 @@ function App() {
 
       {tab === "home" && (
         <Home entries={entries} plan={plan} topics={topics} onAbout={() => go("about")}
+          onRead={openReader} onMarkChapters={markChapters}
           onSetPlan={choosePlan} onLogReading={logReading}
-          onDevotionFrom={devotionFromDay} onNew={go}
+          onDevotionFrom={devotionFromDay}
           onOpen={(e) => { setViewing(e); setTab("library"); }}
           onOpenTopic={openInVerses}
           onAllTopics={() => openInVerses(null, null)} />
@@ -3616,6 +3973,13 @@ function App() {
         <VerseSearch entries={entries} jumpTo={jumpTo}
           key={jumpTo ? (jumpTo.topic || jumpTo.ref || "all") : "verses"}
           onOpen={(e) => { setViewing(e); setTab("library"); }} />
+      )}
+
+      {tab === "read" && reading && (
+        <Reader target={reading} coverage={plan?.coverage || {}}
+          onMarkRead={async (ch) => { await markChapters(ch); setTab("home"); }}
+          onDevotion={(ch) => { devotionFromDay(ch); }}
+          onBack={() => setTab("home")} />
       )}
 
       {tab === "about" && <About scripture={scripture} />}
