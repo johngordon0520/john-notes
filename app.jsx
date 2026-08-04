@@ -574,7 +574,7 @@ function GlobalStyle() {
       .sn-input:focus, .sn-textarea:focus { border-bottom-color:var(--accent); border-bottom-width:1.5px; }
       .sn-input::placeholder, .sn-textarea::placeholder { color:#B3ABA0; }
       .sn-textarea { resize:none; min-height:52px; line-height:1.6; font-size:16px; }
-      .sn-textarea.serif { font-family:'Lora',Georgia,serif; font-size:17px; line-height:1.65; }
+      .sn-textarea.serif { font-size:16.5px; line-height:1.65; }
       select.sn-input { appearance:none; }
       .sn-input-date { font-family:'IBM Plex Mono',monospace; font-size:14px; padding:8px 0;
         min-width:0; width:100%; -webkit-appearance:none; appearance:none; }
@@ -666,6 +666,131 @@ function GlobalStyle() {
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
       /* topic search — small, sits above the shortcut pills */
+
+      /* scripture text, tag panel, verse find */
+      /* copyright / about */
+      .sn-legal { font-size:13.5px; line-height:1.65; color:var(--ink-2); margin-bottom:14px; }
+      .sn-esvline { margin-bottom:6px; }
+      .sn-esvline a { color:var(--ink-3); text-decoration:none; border-bottom:1px solid var(--rule); }
+      .sn-about-ft { margin-top:40px; padding-top:18px; border-top:1px solid var(--rule-soft);
+        font-size:11.5px; color:#A39C90; text-align:center; letter-spacing:.02em; line-height:1.7;
+        font-weight:400; }
+      .sn-footlink { display:block; width:100%; margin-top:34px; padding:16px 0;
+        border-top:1px solid var(--rule-soft); background:none; border-left:none;
+        border-right:none; border-bottom:none; color:var(--ink-3); font-size:12.5px;
+        font-family:'Inter',sans-serif; cursor:pointer; text-align:center; letter-spacing:.02em; }
+      .sn-drawer-item.foot { margin-top:auto; border-top:1px solid var(--rule-soft);
+        border-radius:0; font-size:13.5px; color:var(--ink-3); font-weight:500; padding-top:16px; }
+      /* scripture text — same face as the rest of the app, set larger */
+      .sn-scripture { font-family:'Inter',system-ui,sans-serif; font-size:17px; line-height:1.7;
+        color:var(--ink); border-left:2px solid var(--ochre); padding:2px 0 2px 14px;
+        margin:8px 0; }
+      .sn-scripture.compact { font-size:16px; line-height:1.65; margin:6px 0 10px; }
+      .sn-scripture.dim { color:var(--ink-3); font-style:italic; border-left-color:var(--rule); }
+      .sn-scripture.err { font-size:13px; color:var(--alert); border-left-color:#E4CDC5; }
+      .sn-scripture-attr { font-family:'Inter',sans-serif; font-size:10px; color:#A39C90;
+        margin-top:8px; letter-spacing:.06em; text-transform:uppercase; }
+      .sn-scripture-attr a { color:#A39C90; text-decoration:none;
+        border-bottom:1px solid var(--rule); margin-left:5px;
+        text-transform:lowercase; letter-spacing:.02em; }
+
+
+      /* reader */
+      /* scripture word search */
+      .sn-esvsearch { margin-bottom:8px; }
+      .sn-hit { padding:13px 0; border-bottom:1px solid var(--rule-soft); }
+      .sn-hit-ref { font-size:12px; color:var(--ochre); font-weight:600; margin-bottom:5px; }
+      .sn-hit-text { font-size:16.5px; line-height:1.65; color:var(--ink); }
+      .sn-hit-ft { display:flex; align-items:center; margin-top:9px; }
+      .sn-hit-have { font-size:12px; color:var(--ink-3); }
+      .sn-hit-attr { font-size:10px; color:#A39C90; letter-spacing:.06em; text-transform:uppercase;
+        padding:10px 0 2px; }
+      .sn-hit-attr a { color:#A39C90; text-decoration:none; border-bottom:1px solid var(--rule);
+        margin-left:5px; text-transform:lowercase; letter-spacing:.02em; }
+      .sn-hit-pager { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        padding:12px 0; font-size:12.5px; color:var(--ink-3); }
+      .sn-hit-pager button { background:none; border:1px solid var(--rule); border-radius:100px;
+        padding:7px 14px; font-family:'Inter',sans-serif; font-size:12.5px; font-weight:600;
+        color:var(--ink-2); cursor:pointer; }
+      .sn-hit-pager button:disabled { opacity:.35; }
+
+      .sn-readhd { display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+        margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--rule); }
+      .sn-readhd h2 { margin:0; font-size:24px; font-weight:500; letter-spacing:-.01em; }
+      .sn-readdone { font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+        color:var(--accent); flex-shrink:0; }
+      .sn-readch { margin-bottom:26px; }
+      .sn-readch-lbl { font-size:11px; color:var(--ink-3); letter-spacing:.08em;
+        text-transform:uppercase; margin-bottom:8px; }
+      .sn-readch .sn-scripture { font-size:19px; line-height:1.8; border-left:none; padding-left:0; }
+      .sn-readft { margin-top:34px; padding-top:20px; border-top:1px solid var(--rule); }
+      .sn-readft-lbl { font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+        color:var(--ink-3); margin-bottom:12px; text-align:center; }
+
+      /* daily proverb — reads as a panel, like the plan above it */
+      .sn-proverb-text { margin:2px 0 14px; }
+      .sn-proverb-text .sn-scripture { font-family:'Inter',system-ui,sans-serif; font-size:19px;
+        line-height:1.7; border-left:none; padding-left:0; margin:0; }
+      .sn-proverb-text .sn-scripture-attr { display:none; }
+      .sn-proverb-noref { font-size:13.5px; color:var(--ink-3); line-height:1.55;
+        margin:2px 0 14px; }
+      .sn-proverb-done { flex:1; font-size:13px; font-weight:600; color:var(--accent);
+        padding:9px 0; }
+
+      /* topical suggestions — reference, text, and one action */
+      .sn-suggest { padding:14px 0; border-bottom:1px solid var(--rule-soft); }
+      .sn-suggest-hd { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-bottom:2px; }
+      .sn-suggest-hd .sn-mono { font-size:12.5px; color:#8A6410; font-weight:600; }
+      .sn-suggest-text .sn-scripture { border-left:none; padding-left:0; margin:4px 0 0;
+        font-size:16.5px; line-height:1.65; }
+      .sn-suggest-text .sn-scripture-attr { display:none; }
+      .sn-suggest-read { background:none; border:none; color:var(--accent-deep); font-size:13px;
+        font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; padding:6px 0 0; }
+      .sn-suggest-add { background:transparent; border:1px solid var(--rule); color:var(--ink-2);
+        border-radius:100px; font-size:12.5px; font-weight:600; cursor:pointer;
+        font-family:'Inter',sans-serif; padding:7px 14px; flex-shrink:0; text-transform:capitalize; }
+      .sn-suggest-add:active { background:var(--accent-wash); border-color:var(--accent);
+        color:var(--accent-deep); }
+
+      .sn-topicgroup { margin-bottom:22px; }
+      .sn-topicgroup-hd { display:flex; align-items:baseline; justify-content:space-between;
+        gap:10px; padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--rule); }
+      .sn-topicgroup-nm { font-family:'Lora',Georgia,serif; font-size:19px; font-weight:500;
+        text-transform:capitalize; }
+
+      /* search fields — same underline language as every other input */
+      /* ESV markup — poetry, paragraphs, verse numbers, headings */
+      .sn-esvhtml { font-family:'Inter',system-ui,sans-serif; }
+      .sn-esvhtml p { margin:0 0 13px; }
+      .sn-esvhtml p:last-child { margin-bottom:0; }
+      .sn-esvhtml h3 { font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
+        letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); margin:22px 0 9px; }
+      .sn-esvhtml h3:first-child { margin-top:0; }
+      .sn-esvhtml .verse-num, .sn-esvhtml .chapter-num {
+        font-family:'IBM Plex Mono',monospace; font-size:.68em; font-weight:600;
+        color:var(--ochre); vertical-align:.35em; margin-right:2px; }
+      .sn-esvhtml .block-indent { margin:0 0 13px; padding-left:4px; }
+      .sn-esvhtml .line, .sn-esvhtml .indent { display:block; text-indent:-14px; padding-left:14px; }
+      .sn-esvhtml .indent { padding-left:32px; }
+      .sn-esvhtml .decl { display:block; padding-left:14px; }
+      .sn-esvhtml .psalm-title, .sn-esvhtml .speaker { font-style:italic; color:var(--ink-2);
+        display:block; margin-bottom:9px; font-size:.92em; }
+      .sn-esvhtml .footnote, .sn-esvhtml .footnotes { font-size:12.5px; color:var(--ink-3); }
+      .sn-esvhtml .footnotes { margin-top:18px; padding-top:12px;
+        border-top:1px solid var(--rule-soft); line-height:1.55; }
+      .sn-esvhtml .footnotes p { margin:0 0 7px; }
+      .sn-esvhtml a { color:var(--ink-3); text-decoration:none; border-bottom:1px dotted var(--rule); }
+      .sn-esvhtml .extra_text, .sn-esvhtml .copyright, .sn-esvhtml .audio { display:none; }
+
+      /* tagging panel + reading log rows */
+      .sn-tagpanel { background:var(--card); border:1px solid var(--accent); border-radius:var(--r);
+        padding:15px; margin-bottom:16px; }
+      .sn-tagpanel-hd { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-bottom:6px; font-size:14px; font-weight:600; }
+      .sn-logtags { font-size:11.5px; color:#8A6410; margin-left:9px; }
+      .sn-logopen { padding:2px 0 12px; border-bottom:1px solid var(--rule-soft); margin-bottom:4px; }
+
       .sn-search { display:flex; align-items:center; gap:11px;
         border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
         transition:border-color .15s; }
@@ -673,10 +798,10 @@ function GlobalStyle() {
       .sn-search .ico { font-size:17px; color:var(--ink-3); flex-shrink:0; line-height:1;
         transform:translateY(-1px); }
       .sn-search input { flex:1; min-width:0; border:none; background:transparent; outline:none;
-        font-family:'Inter',sans-serif; font-size:16px; color:var(--ink); padding:4px 0; }
+        font-family:'Inter',system-ui,sans-serif; font-size:16px; color:var(--ink); padding:4px 0; }
       .sn-search input::placeholder { color:#B3ABA0; }
       .sn-search.mono input { font-family:'IBM Plex Mono',monospace; font-size:15px; }
-      .sn-search.mono input::placeholder { font-family:'Inter',sans-serif; }
+      .sn-search.mono input::placeholder { font-family:'Inter',system-ui,sans-serif; }
       .sn-search .clear { background:none; border:none; color:var(--ink-3); font-size:21px;
         line-height:1; cursor:pointer; padding:4px 0 4px 8px; flex-shrink:0; }
 
@@ -696,8 +821,8 @@ function GlobalStyle() {
         cursor:pointer; margin:2px 0 6px; }
       .sn-resurface-ref { font-family:'IBM Plex Mono',monospace; font-size:12px; color:#8A6410;
         font-weight:600; letter-spacing:.02em; margin-bottom:7px; }
-      .sn-resurface-gist { font-family:'Lora',Georgia,serif; font-size:18px; line-height:1.55;
-        color:var(--ink); font-style:italic; }
+      .sn-resurface-gist { font-family:'Inter',system-ui,sans-serif; font-size:17px; line-height:1.6;
+        color:var(--ink); }
       .sn-resurface-ft { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:10px; }
       .sn-resurface-ft .ago { margin-left:auto; font-size:11.5px; color:var(--ink-3); }
 
@@ -800,7 +925,7 @@ function GlobalStyle() {
         padding:2px 0 2px 13px; margin-top:10px; }
       .sn-gist-ref { font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#8A6410;
         font-weight:600; margin-bottom:6px; }
-      .sn-gist-read { font-family:'Lora',Georgia,serif; font-size:16px; line-height:1.6;
+      .sn-gist-read { font-family:'Inter',system-ui,sans-serif; font-size:16px; line-height:1.6;
         color:var(--ink); margin-bottom:6px; }
       .sn-loadtext { background:none; border:none; color:var(--ink-3); font-size:12px; font-weight:600;
         cursor:pointer; padding:6px 0 0; font-family:'Inter',sans-serif; }
@@ -1724,7 +1849,7 @@ function NoteDetail({ note, onBack, onEdit, onDelete }) {
       {note.bigIdea && (
         <div className="sn-dtl">
           <div className="sn-dtl-lbl">Big idea</div>
-          <div className="sn-dtl-txt sn-serif" style={{ fontSize: 18, lineHeight: 1.7, fontWeight: 400 }}>
+          <div className="sn-dtl-txt" style={{ fontSize: 17, lineHeight: 1.7 }}>
             <span className="sn-hl">{note.bigIdea}</span>
           </div>
         </div>
@@ -2262,8 +2387,7 @@ function DevotionDetail({ item, onBack, onEdit, onDelete }) {
               {dev.method !== "free" && <span className="sn-stepno">{i + 1}</span>}
               {step.label}
             </div>
-            <div className={"sn-dtl-txt" + (step.serif ? " sn-serif" : "")}
-              style={step.serif ? { fontSize: 16, lineHeight: 1.6 } : undefined}>
+            <div className="sn-dtl-txt">
               {dev.fields[step.id]}
             </div>
           </div>
@@ -2416,6 +2540,18 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
       ? topicIndex.filter((t) => t.topic.includes(query))
       : topicIndex;
 
+    /* One group per matching topic — yours and the curated ones together,
+       so a search lands on verses rather than on something else to tap. */
+    const searchGroups = (() => {
+      if (!query) return [];
+      const names = new Set(shownTopics.map((t) => t.topic));
+      searchTopical(query).forEach((h) => names.add(h.topic));
+      return [...names].map((topic) => {
+        const mine = topicIndex.find((t) => t.topic === topic)?.refs || [];
+        return { topic, mine, suggested: suggestForTopic(topic, new Set(mine)) };
+      }).filter((g) => g.mine.length || g.suggested.length);
+    })();
+
     return (
       <div className="sn-scroll">
         <div className="sn-tseg" style={{ marginBottom: 12 }}>
@@ -2446,14 +2582,9 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
                   Well-known texts on this theme. Add any that belong in your library.
                 </div>
                 {suggestions.map((ref) => (
-                  <div className="sn-suggest" key={ref}>
-                    <span className="sn-mono">{ref}</span>
-                    <button className="sn-suggest-read" onClick={() => setTagging(ref)}>Look</button>
-                    <button className="sn-suggest-add"
-                      onClick={() => setTopicsFor(ref, [...(topics[ref] || []), openTopic])}>
-                      + Add
-                    </button>
-                  </div>
+                  <SuggestedVerse key={ref} refStr={ref} topic={openTopic}
+                    onAdd={(r) => setTopicsFor(r, [...(topics[r] || []), openTopic])}
+                    onTagged={setTagging} />
                 ))}
               </>
             )}
@@ -2485,17 +2616,42 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
 
             {tagging && <TagVersePanel refStr={tagging} onClose={() => setTagging(null)} />}
 
-            {query && searchTopical(query).some((h) => !topicIndex.some((t) => t.topic === h.topic)) && (
+            {query && searchGroups.length > 0 && (
               <>
-                <div className="sn-secttl">Start a topic</div>
-                {searchTopical(query)
-                  .filter((h) => !topicIndex.some((t) => t.topic === h.topic))
-                  .map((h) => (
-                    <button className="sn-newtopic" key={h.topic} onClick={() => setOpenTopic(h.topic)}>
-                      <span className="nm">{h.topic}</span>
-                      <span className="ct">{h.refs.length} passages ready</span>
-                    </button>
-                  ))}
+                {searchGroups.map((g) => (
+                  <div key={g.topic} className="sn-topicgroup">
+                    <div className="sn-topicgroup-hd">
+                      <span className="sn-topicgroup-nm">{g.topic}</span>
+                      <button className="sn-link" onClick={() => { setOpenTopic(g.topic); setQ(""); }}>
+                        Open topic
+                      </button>
+                    </div>
+
+                    {g.mine.map((ref) => {
+                      const e = byRef[ref] || { ref, gists: [], notes: [] };
+                      return <VerseRow key={g.topic + ref} e={e} />;
+                    })}
+
+                    {g.mine.length === 0 && (
+                      <div className="sn-note" style={{ margin: "2px 0 10px" }}>
+                        Nothing tagged {g.topic} yet — here's where to start.
+                      </div>
+                    )}
+
+                    {g.suggested.length > 0 && (
+                      <>
+                        {g.mine.length > 0 && (
+                          <div className="sn-sublbl" style={{ marginTop: 14 }}>More on {g.topic}</div>
+                        )}
+                        {g.suggested.map((ref) => (
+                          <SuggestedVerse key={g.topic + "s" + ref} refStr={ref} topic={g.topic}
+                            onAdd={(r) => setTopicsFor(r, [...(topics[r] || []), g.topic])}
+                            onTagged={setTagging} />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))}
               </>
             )}
 
@@ -2506,7 +2662,14 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
               </div>
             )}
 
-            {shownTopics.length > 0 && (
+            {query && searchGroups.length === 0 && (
+              <div className="sn-empty">
+                <div className="ico">🏷</div>
+                Nothing tagged "{query}" yet.
+              </div>
+            )}
+
+            {!query && shownTopics.length > 0 && (
               <div className="sn-topic-grid">
                 {shownTopics.map((t) => (
                   <button className="sn-topic-card" key={t.topic} onClick={() => setOpenTopic(t.topic)}>
@@ -2916,6 +3079,31 @@ const TOPICAL = {
   comfort: ["2 Corinthians 1:3-4", "Psalms 23:4", "Matthew 5:4", "Isaiah 66:13", "Psalms 119:50"],
   grace: ["Ephesians 2:8-9", "2 Corinthians 12:9", "Titus 2:11-12", "Romans 5:20-21", "Hebrews 4:16"],
   discipline: ["Hebrews 12:5-11", "Proverbs 3:11-12", "1 Corinthians 9:24-27", "2 Timothy 1:7", "Titus 2:11-12"],
+
+  /* --- sin, named plainly, with the mercy that answers it --- */
+  sin: ["Romans 3:23", "Romans 6:23", "1 John 1:8-10", "James 4:17", "Romans 6:12-14", "Psalms 51:1-4"],
+  lust: ["Matthew 5:27-28", "Job 31:1", "1 John 2:16", "2 Timothy 2:22", "Romans 13:14", "Colossians 3:5"],
+  "sexual immorality": ["1 Corinthians 6:18-20", "1 Thessalonians 4:3-5", "Hebrews 13:4", "Ephesians 5:3", "Proverbs 5:3-8", "1 Corinthians 10:13"],
+  stealing: ["Exodus 20:15", "Ephesians 4:28", "Proverbs 10:2", "Leviticus 19:11", "1 Corinthians 6:9-11"],
+  bitterness: ["Ephesians 4:31-32", "Hebrews 12:14-15", "Colossians 3:13", "Romans 12:19", "Proverbs 14:10"],
+  covetousness: ["Exodus 20:17", "Luke 12:15", "Hebrews 13:5", "Colossians 3:5", "1 Timothy 6:6-10"],
+  greed: ["Luke 12:15", "1 Timothy 6:9-10", "Proverbs 11:24-25", "Ecclesiastes 5:10", "Hebrews 13:5"],
+  pride: ["Proverbs 16:18", "James 4:6-10", "Proverbs 11:2", "1 Peter 5:5-6", "Galatians 6:3"],
+  lying: ["Proverbs 12:22", "Ephesians 4:25", "Colossians 3:9-10", "Proverbs 6:16-19", "John 8:44"],
+  gossip: ["Proverbs 16:28", "Proverbs 26:20", "Ephesians 4:29", "James 4:11", "Proverbs 11:13"],
+  envy: ["Proverbs 14:30", "James 3:14-16", "Galatians 5:26", "1 Peter 2:1", "Psalms 37:1"],
+  drunkenness: ["Ephesians 5:18", "Proverbs 20:1", "Proverbs 23:20-21", "Galatians 5:19-21", "1 Corinthians 6:9-11"],
+  laziness: ["Proverbs 6:6-11", "Proverbs 13:4", "2 Thessalonians 3:10-12", "Proverbs 24:30-34", "Colossians 3:23"],
+  idolatry: ["Exodus 20:3-5", "1 John 5:21", "Colossians 3:5", "Romans 1:25", "1 Corinthians 10:14"],
+  gluttony: ["Proverbs 23:20-21", "Philippians 3:19", "1 Corinthians 6:12", "Proverbs 25:16", "1 Corinthians 10:31"],
+  selfishness: ["Philippians 2:3-4", "James 3:16", "Galatians 5:13", "1 Corinthians 10:24", "Romans 15:1-2"],
+  unforgiveness: ["Matthew 18:21-35", "Mark 11:25", "Ephesians 4:32", "Colossians 3:13", "Matthew 6:14-15"],
+  addiction: ["1 Corinthians 6:12", "1 Corinthians 10:13", "Romans 6:16-18", "2 Peter 2:19", "Galatians 5:1"],
+  "self-control": ["Galatians 5:22-23", "1 Corinthians 9:24-27", "Titus 2:11-12", "Proverbs 25:28", "2 Peter 1:5-8"],
+  confession: ["1 John 1:9", "James 5:16", "Psalms 32:3-5", "Proverbs 28:13", "Psalms 51:10-12"],
+  guilt: ["Romans 8:1", "Psalms 103:10-12", "Isaiah 43:25", "Hebrews 10:19-22", "Micah 7:18-19"],
+  shame: ["Romans 10:11", "Psalms 34:5", "Isaiah 61:7", "Hebrews 12:2", "Romans 8:1"],
+  "the tongue": ["James 3:2-10", "Proverbs 18:21", "Ephesians 4:29", "Proverbs 15:1", "Psalms 141:3"],
 };
 
 /* Suggestions for a topic: exact match first, then near-matches on the
@@ -2997,7 +3185,7 @@ function ScriptureSearch({ initialQuery, tagTopic, onTag, taggedRefs }) {
             return (
               <div className="sn-hit" key={r.ref}>
                 <div className="sn-hit-ref sn-mono">{r.ref}</div>
-                <div className="sn-hit-text sn-serif">{r.snippet}</div>
+                <div className="sn-hit-text">{r.snippet}</div>
                 <div className="sn-hit-ft">
                   {already
                     ? <span className="sn-hit-have">In your library</span>
@@ -3019,6 +3207,45 @@ function ScriptureSearch({ initialQuery, tagTopic, onTag, taggedRefs }) {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/* A recommended passage, showing its text. Fetching waits until the row
+   is actually on screen, so a search doesn't fire a request for every
+   suggestion before you've read the first one. */
+function SuggestedVerse({ refStr, topic, onAdd, onTagged }) {
+  const cfg = React.useContext(ScriptureContext);
+  const [visible, setVisible] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || visible) return;
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setVisible(true); io.disconnect(); }
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible]);
+
+  const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
+
+  return (
+    <div className="sn-suggest" ref={ref}>
+      <div className="sn-suggest-hd">
+        <span className="sn-mono">{refStr}</span>
+        <button className="sn-suggest-add" onClick={() => onAdd(refStr)}>+ {topic}</button>
+      </div>
+      {hasKey && visible && (
+        <div className="sn-suggest-text">
+          <ScriptureText refStr={refStr} preset="verse" />
+        </div>
+      )}
+      {!hasKey && (
+        <button className="sn-suggest-read" onClick={() => onTagged(refStr)}>Open it</button>
       )}
     </div>
   );
