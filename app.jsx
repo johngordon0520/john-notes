@@ -666,16 +666,19 @@ function GlobalStyle() {
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
       /* topic search — small, sits above the shortcut pills */
-      .sn-topicsearch { display:flex; align-items:center; gap:9px; background:var(--card);
-        border:1px solid var(--rule); border-radius:100px; padding:0 14px; margin-bottom:11px;
-        min-height:42px; transition:border-color .15s; }
-      .sn-topicsearch:focus-within { border-color:var(--accent); }
-      .sn-topicsearch .ico { font-size:15px; color:var(--ink-3); flex-shrink:0; line-height:1; }
-      .sn-topicsearch input { flex:1; min-width:0; border:none; background:transparent; outline:none;
-        font-family:'Inter',sans-serif; font-size:14.5px; color:var(--ink); padding:10px 0; }
-      .sn-topicsearch input::placeholder { color:var(--ink-3); }
-      .sn-topicsearch .clear { background:none; border:none; color:var(--ink-3); font-size:19px;
-        line-height:1; cursor:pointer; padding:4px 0 4px 6px; flex-shrink:0; }
+      .sn-search { display:flex; align-items:center; gap:11px;
+        border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
+        transition:border-color .15s; }
+      .sn-search:focus-within { border-bottom-color:var(--accent); }
+      .sn-search .ico { font-size:17px; color:var(--ink-3); flex-shrink:0; line-height:1;
+        transform:translateY(-1px); }
+      .sn-search input { flex:1; min-width:0; border:none; background:transparent; outline:none;
+        font-family:'Inter',sans-serif; font-size:16px; color:var(--ink); padding:4px 0; }
+      .sn-search input::placeholder { color:#B3ABA0; }
+      .sn-search.mono input { font-family:'IBM Plex Mono',monospace; font-size:15px; }
+      .sn-search.mono input::placeholder { font-family:'Inter',sans-serif; }
+      .sn-search .clear { background:none; border:none; color:var(--ink-3); font-size:21px;
+        line-height:1; cursor:pointer; padding:4px 0 4px 8px; flex-shrink:0; }
 
       .sn-topicrow { display:flex; flex-wrap:wrap; gap:7px; }
       .sn-topicpill { display:inline-flex; align-items:center; gap:7px; background:var(--card);
@@ -1793,13 +1796,6 @@ function Library({ entries, onOpen }) {
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-
-  /* Curated passages for the open topic, minus what you already hold */
-  const taggedRefs = useMemo(() => new Set(Object.keys(topics)), [topics]);
-  const suggestions = useMemo(
-    () => (openTopic ? suggestForTopic(openTopic, taggedRefs) : []),
-    [openTopic, taggedRefs]
-  );
     return entries.filter((e) => {
       if (filter !== "all" && (e.kind || "sermon") !== filter) return false;
       if (!query) return true;
@@ -1817,9 +1813,11 @@ function Library({ entries, onOpen }) {
         ))}
       </div>
 
-      <div className="sn-field">
-        <input className="sn-input" placeholder="Search everything — verses, topics, words…"
+      <div className="sn-search">
+        <span className="ico">⌕</span>
+        <input placeholder="Search everything — verses, topics, words…"
           value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && <button className="clear" onClick={() => setQ("")}>×</button>}
       </div>
 
       {sorted.length === 0 ? (
@@ -2473,8 +2471,12 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
             {tagPicker && (
               <VersePicker onClose={() => setTagPicker(false)} onPick={(ref) => setTagging(ref)} />
             )}
-            <input className="sn-input" placeholder="Find a topic, e.g. patience"
-              value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 14 }} />
+            <div className="sn-search">
+              <span className="ico">⌕</span>
+              <input placeholder="Find a topic, e.g. patience"
+                value={q} onChange={(e) => setQ(e.target.value)} />
+              {q && <button className="clear" onClick={() => setQ("")}>×</button>}
+            </div>
 
             <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm"
               style={{ marginBottom: 16 }} onClick={() => setTagPicker(true)}>
@@ -2536,7 +2538,7 @@ function VerseSearch({ entries, onOpen, jumpTo }) {
         <button className="on">By reference</button>
       </div>
 
-      <div className="sn-versefind">
+      <div className="sn-search mono">
         <span className="ico">⌕</span>
         <input placeholder="Find a verse, e.g. Rom 8" value={q}
           onChange={(e) => setQ(e.target.value)} />
@@ -2971,7 +2973,7 @@ function ScriptureSearch({ initialQuery, tagTopic, onTag, taggedRefs }) {
 
   return (
     <div className="sn-esvsearch">
-      <div className="sn-versefind">
+      <div className="sn-search">
         <span className="ico">⌕</span>
         <input value={q} onChange={(e) => setQ(e.target.value)}
           placeholder={tagTopic ? `Search the ESV for "${tagTopic}"` : "Search the ESV for a word or phrase"}
@@ -3112,28 +3114,34 @@ function ProverbCard({ coverage, onRead, onOpen }) {
   const p = proverbForToday();
   if (!p) return null;
 
-  const read = rangeTotal(coverage[`${p.book} ${p.ch}`] || [])
-    ? (coverage[`${p.book} ${p.ch}`] || []).some(([a, b]) => p.verse >= a && p.verse <= b)
-    : false;
+  const ranges = coverage[`${p.book} ${p.ch}`] || [];
+  const read = ranges.some(([a, b]) => p.verse >= a && p.verse <= b);
   const hasText = !!(cfg.apiKey || cfg.proxyUrl);
 
   return (
-    <div className="sn-proverb">
-      <div className="sn-proverb-lbl">Proverb for today</div>
+    <div className="sn-panel">
+      <div className="sn-panel-hd">
+        <span>Proverb for today</span>
+        <button className="sn-link" onClick={() => onOpen([{ book: p.book, ch: p.ch }])}>
+          Whole chapter
+        </button>
+      </div>
+
+      <div className="sn-today-lbl">{p.ref}</div>
 
       {hasText
-        ? <ScriptureText refStr={p.ref} preset="verse" />
+        ? <div className="sn-proverb-text"><ScriptureText refStr={p.ref} preset="verse" /></div>
         : <div className="sn-proverb-noref">
             Add an ESV key under Backup &amp; storage to see the verse here.
           </div>}
 
-      <div className="sn-proverb-row">
-        <span className="sn-proverb-ref sn-mono">{p.ref}</span>
-        {read
-          ? <span className="sn-proverb-done">Read ✓</span>
-          : <button className="sn-proverb-mark" onClick={() => onRead(p.ref)}>Mark read</button>}
-        <button className="sn-proverb-open"
-          onClick={() => onOpen([{ book: p.book, ch: p.ch }])}>Whole chapter ›</button>
+      <div className="sn-today-actions">
+        {read ? (
+          <div className="sn-proverb-done">Read today ✓</div>
+        ) : (
+          <button className="sn-btn sn-btn-accent sn-btn-sm" style={{ flex: 1 }}
+            onClick={() => onRead(p.ref)}>Mark read</button>
+        )}
       </div>
     </div>
   );
@@ -3443,7 +3451,7 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
         <>
           <div className="sn-secttl">Pray through</div>
 
-          <div className="sn-topicsearch">
+          <div className="sn-search">
             <span className="ico">⌕</span>
             <input value={topicQ} onChange={(e) => setTopicQ(e.target.value)}
               placeholder="What are you praying about?"
