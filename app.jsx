@@ -2631,7 +2631,74 @@ const ESV_VERSE_CAP = 450;          // stay under Crossway's 500
 
 const ScriptureContext = React.createContext({ ready: false, get: null });
 
-const defaultScripture = () => ({ apiKey: "", proxyUrl: "", autoFetch: true });
+const defaultScripture = () => ({
+  apiKey: "", proxyUrl: "", autoFetch: true,
+  verseNumbers: true,     // reader only
+  headings: true,         // reader only
+  footnotes: false,       // reader only
+});
+
+/* Three presentations of the same text. Poetry indentation and paragraphs
+   come from the HTML endpoint; the plain endpoint is kept for places where
+   a compact single line is what's wanted. */
+const PRESETS = {
+  reader: (cfg) => ({
+    endpoint: "html",
+    params: {
+      "include-passage-references": "false",
+      "include-verse-numbers": cfg.verseNumbers ? "true" : "false",
+      "include-first-verse-numbers": cfg.verseNumbers ? "true" : "false",
+      "include-headings": cfg.headings ? "true" : "false",
+      "include-subheadings": cfg.headings ? "true" : "false",
+      "include-footnotes": cfg.footnotes ? "true" : "false",
+      "include-footnote-body": cfg.footnotes ? "true" : "false",
+      "include-chapter-numbers": "false",
+      "include-audio-link": "false",
+      "include-short-copyright": "false",
+      "include-crossrefs": "false",
+      "wrapping-div": "true",
+      "div-classes": "esvp",
+    },
+  }),
+  /* One verse in a card: no number floating in front of it, but poetry
+     lines still break the way the ESV sets them. */
+  verse: () => ({
+    endpoint: "html",
+    params: {
+      "include-passage-references": "false",
+      "include-verse-numbers": "false",
+      "include-first-verse-numbers": "false",
+      "include-headings": "false",
+      "include-subheadings": "false",
+      "include-footnotes": "false",
+      "include-chapter-numbers": "false",
+      "include-audio-link": "false",
+      "include-short-copyright": "false",
+      "wrapping-div": "true",
+      "div-classes": "esvp esvp-verse",
+    },
+  }),
+  /* Chips and search results — compact plain text. */
+  inline: () => ({
+    endpoint: "text",
+    params: {
+      "include-passage-references": "false",
+      "include-verse-numbers": "false",
+      "include-headings": "false",
+      "include-footnotes": "false",
+      "include-short-copyright": "false",
+    },
+  }),
+};
+
+/* Format is part of the identity of a cached passage — the same verse
+   fetched for the proverb card is different text from the reader's. */
+function presetSignature(preset, cfg) {
+  if (preset === "reader") {
+    return `reader:${cfg.verseNumbers ? 1 : 0}${cfg.headings ? 1 : 0}${cfg.footnotes ? 1 : 0}`;
+  }
+  return preset;
+}
 
 async function loadScripture() {
   try {
@@ -2680,59 +2747,76 @@ function refVerseCount(ref) {
   return Math.max(1, p.end - p.start + 1);
 }
 
-async function fetchESV(ref, cfg) {
-  const params = new URLSearchParams({
-    q: ref,
-    "include-headings": "false",
-    "include-footnotes": "false",
-    "include-verse-numbers": "true",
-    "include-short-copyright": "false",
-    "include-passage-references": "false",
-  });
+async function fetchESV(ref, cfg, preset = "inline") {
+  const spec = (PRESETS[preset] || PRESETS.inline)(cfg);
+  const params = new URLSearchParams({ q: ref, ...spec.params });
+
+  const path = spec.endpoint === "html" ? "passage/html" : "passage/text";
   const url = cfg.proxyUrl
-    ? `${cfg.proxyUrl.replace(/\/$/, "")}/esv?${params}`
-    : `https://api.esv.org/v3/passage/text/?${params}`;
+    ? `${cfg.proxyUrl.replace(/\/$/, "")}/${path}?${params}`
+    : `https://api.esv.org/v3/${path}/?${params}`;
   const headers = cfg.proxyUrl ? {} : { Authorization: `Token ${cfg.apiKey}` };
 
   const res = await fetch(url, { headers });
   if (res.status === 401) throw new Error("Key rejected — check it in Backup & storage.");
   if (!res.ok) throw new Error(`ESV returned ${res.status}`);
   const data = await res.json();
-  const text = (data.passages || []).join("\n").trim();
-  if (!text) throw new Error("No passage came back for that reference.");
-  return { text, verses: refVerseCount(ref) };
+
+  const raw = (data.passages || []).join("\n").trim();
+  if (!raw) throw new Error("No passage came back for that reference.");
+
+  return {
+    html: spec.endpoint === "html" ? sanitizePassage(raw) : null,
+    text: spec.endpoint === "html" ? null : raw,
+    verses: refVerseCount(ref),
+  };
 }
 
-async function getScripture(ref, cfg) {
+/* Crossway is a trusted source, but markup goes through innerHTML, so
+   strip anything scriptable on principle rather than on trust. */
+function sanitizePassage(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+}
+
+async function getScripture(ref, cfg, preset = "inline") {
+  const key = `${presetSignature(preset, cfg)}|${ref}`;
   const cache = await esvCacheLoad();
-  if (cache[ref]) return { ...cache[ref], cached: true };
+  if (cache[key]) return { ...cache[key], cached: true };
   if (!cfg.apiKey && !cfg.proxyUrl) throw new Error("No ESV key set up yet.");
-  const result = await fetchESV(ref, cfg);
-  await esvCachePut(ref, result);
+  const result = await fetchESV(ref, cfg, preset);
+  await esvCachePut(key, result);
   return { ...result, cached: false };
 }
 
-/* Shows the passage text, on demand or automatically */
-function ScriptureText({ refStr, compact }) {
+/* Shows the passage, on demand or automatically. `preset` picks the
+   presentation: "reader" for chapters, "verse" for the proverb card,
+   "inline" for chips and snippets. */
+function ScriptureText({ refStr, compact, preset = "inline" }) {
   const cfg = React.useContext(ScriptureContext);
   const [state, setState] = useState({ status: "idle" });
 
   const load = async () => {
     setState({ status: "loading" });
-    try { setState({ status: "ok", ...(await getScripture(refStr, cfg)) }); }
+    try { setState({ status: "ok", ...(await getScripture(refStr, cfg, preset)) }); }
     catch (e) { setState({ status: "error", message: e.message }); }
   };
 
   useEffect(() => {
     let alive = true;
+    const key = `${presetSignature(preset, cfg)}|${refStr}`;
     esvCacheLoad().then((c) => {
       if (!alive) return;
-      if (c[refStr]) setState({ status: "ok", ...c[refStr], cached: true });
+      if (c[key]) setState({ status: "ok", ...c[key], cached: true });
       else if (cfg.autoFetch && (cfg.apiKey || cfg.proxyUrl)) load();
       else setState({ status: "idle" });
     });
     return () => { alive = false; };
-  }, [refStr, cfg.apiKey, cfg.proxyUrl, cfg.autoFetch]);
+  }, [refStr, preset, cfg.apiKey, cfg.proxyUrl, cfg.autoFetch,
+      cfg.verseNumbers, cfg.headings, cfg.footnotes]);
 
   if (!cfg.apiKey && !cfg.proxyUrl) return null;
   if (state.status === "idle")
@@ -2745,7 +2829,9 @@ function ScriptureText({ refStr, compact }) {
 
   return (
     <div className={"sn-scripture" + (compact ? " compact" : "")}>
-      {state.text}
+      {state.html
+        ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
+        : state.text}
       <div className="sn-scripture-attr">
         ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
       </div>
@@ -2965,7 +3051,7 @@ function Reader({ target, coverage, onMarkRead, onDevotion, onBack }) {
       {hasText && chapters.map((c) => (
         <div className="sn-readch" key={`${c.book} ${c.ch}`}>
           <div className="sn-readch-lbl sn-mono">{c.book} {c.ch}</div>
-          <ScriptureText refStr={`${c.book} ${c.ch}`} />
+          <ScriptureText refStr={`${c.book} ${c.ch}`} preset="reader" />
         </div>
       ))}
 
@@ -3036,7 +3122,7 @@ function ProverbCard({ coverage, onRead, onOpen }) {
       <div className="sn-proverb-lbl">Proverb for today</div>
 
       {hasText
-        ? <ScriptureText refStr={p.ref} />
+        ? <ScriptureText refStr={p.ref} preset="verse" />
         : <div className="sn-proverb-noref">
             Add an ESV key under Backup &amp; storage to see the verse here.
           </div>}
@@ -3624,6 +3710,27 @@ function DataPanel({ notes, devotions, topics, plan, scripture, onSaveEsv, onImp
         Load text automatically when a reference is shown
       </label>
 
+      <div className="sn-sublbl" style={{ marginTop: 16 }}>Reading view</div>
+      <label className="sn-check">
+        <input type="checkbox" checked={esv.verseNumbers}
+          onChange={(e) => setEsvLocal({ ...esv, verseNumbers: e.target.checked })} />
+        Verse numbers
+      </label>
+      <label className="sn-check">
+        <input type="checkbox" checked={esv.headings}
+          onChange={(e) => setEsvLocal({ ...esv, headings: e.target.checked })} />
+        Section headings and psalm titles
+      </label>
+      <label className="sn-check">
+        <input type="checkbox" checked={esv.footnotes}
+          onChange={(e) => setEsvLocal({ ...esv, footnotes: e.target.checked })} />
+        Footnotes
+      </label>
+      <div className="sn-note">
+        These apply to the reading page only. The daily proverb always shows without
+        a verse number, and inline snippets stay plain.
+      </div>
+
       <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
         <button className="sn-btn sn-btn-ghost" style={{ flex: 1 }} disabled={esvTesting}
           onClick={async () => {
@@ -3654,7 +3761,8 @@ function DataPanel({ notes, devotions, topics, plan, scripture, onSaveEsv, onImp
       </div>
       <div className="sn-note" style={{ marginBottom: 4 }}>
         Crossway caps local storage at 500 verses, so the oldest passages drop off
-        automatically.
+        automatically. Changing the options above stores a fresh copy in the new
+        format, so clearing the cache after a change keeps it tidy.
         {esvCached > 0 && (
           <> <button className="sn-loadtext" onClick={async () => {
             await esvCacheClear(); setEsvCached(0); onFlash("Passage cache cleared");
