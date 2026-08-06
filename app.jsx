@@ -1023,6 +1023,7 @@ function GlobalStyle() {
       .sn-srcdate { margin-left:auto; font-size:11.5px; color:var(--ink-3); }
       .sn-tseg { display:flex; gap:0; margin-bottom:18px; border-bottom:1px solid var(--rule); }
       .sn-tseg button { flex:1; padding:11px 0 10px; font-size:14px; font-weight:500;
+        user-select:none; -webkit-user-select:none;
         border:none; border-bottom:2px solid transparent; background:none; color:var(--ink-3);
         cursor:pointer; margin-bottom:-1px; font-family:'Inter',sans-serif; }
       .sn-tseg button.on { color:var(--ink); font-weight:600; border-bottom-color:var(--accent); }
@@ -1078,8 +1079,12 @@ function GlobalStyle() {
         line-height:1; padding:4px 8px; margin:-4px -8px -4px 0; }
       .sn-booklist { display:flex; flex-direction:column; }
       .sn-bookrow { display:flex; align-items:center; gap:10px; padding:14px 2px; cursor:pointer;
-        border-bottom:1px solid var(--rule-soft); min-height:50px; }
+        border-bottom:1px solid var(--rule-soft); min-height:50px;
+        user-select:none; -webkit-user-select:none; background:none; border-left:none;
+        border-right:none; border-top:none; width:100%; text-align:left;
+        font-family:'Inter',system-ui,sans-serif; color:var(--ink); }
       .sn-bookrow:active { background:var(--accent-wash); }
+      @media (hover: hover) { .sn-bookrow:hover { background:var(--accent-wash); } }
       .sn-bookrow .nm { font-size:16px; font-weight:400; }
       .sn-bookrow .ct { margin-left:auto; font-family:'IBM Plex Mono',monospace;
         font-size:11.5px; color:var(--ink-3); }
@@ -3352,6 +3357,64 @@ async function saveHighlights(h) {
 }
 const HighlightsContext = React.createContext({ highlights: {}, toggleHighlight: () => {} });
 
+/* Wrap each verse in a tappable span, working on the markup string before
+   React renders it. Doing this afterwards by mutating the DOM was fragile:
+   the timing depended on effects running after paint, and any re-render
+   could discard the changes. This way the spans are part of the markup. */
+function markVerses(html) {
+  try {
+    if (typeof DOMParser === "undefined") return { html, ok: false };
+    const doc = new DOMParser().parseFromString(`<div id="r">${html}</div>`, "text/html");
+    const root = doc.getElementById("r");
+    if (!root) return { html, ok: false };
+
+    const marks = root.querySelectorAll(".verse-num, .chapter-num");
+    if (marks.length === 0) return { html, ok: false };
+
+    /* A verse runs until the next number, crossing paragraphs and poetry
+       lines, so wrap per block and carry the number forward. */
+    let carry = null;
+    const blocks = [...root.querySelectorAll("p, .block-indent")];
+    if (blocks.length === 0) blocks.push(root);
+
+    blocks.forEach((block) => {
+      const kids = [...block.childNodes];
+      let current = carry;
+      let bucket = [];
+
+      const flush = () => {
+        if (current == null || bucket.length === 0) { bucket = []; return; }
+        const span = doc.createElement("span");
+        span.setAttribute("data-v", String(current));
+        block.insertBefore(span, bucket[0]);
+        bucket.forEach((n) => span.appendChild(n));
+        bucket = [];
+      };
+
+      kids.forEach((node) => {
+        const isMark = node.nodeType === 1 &&
+          (node.classList?.contains("verse-num") || node.classList?.contains("chapter-num"));
+        if (isMark) {
+          flush();
+          const n = parseInt((node.textContent || "").replace(/\D+/g, ""), 10);
+          if (!Number.isNaN(n)) current = n;
+          bucket.push(node);
+          return;
+        }
+        bucket.push(node);
+      });
+      flush();
+      carry = current;
+    });
+
+    const out = root.innerHTML;
+    return { html: out, ok: out.includes("data-v=") };
+  } catch (e) {
+    console.warn("Verse marking failed:", e);
+    return { html, ok: false };
+  }
+}
+
 /* ===============================================================
    BIBLE — read anything, mark it up as you go
    =============================================================== */
@@ -3387,7 +3450,9 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     setState({ status: "loading" });
     try {
       const r = await getScripture(`${bk} ${ch}`, cfg, "bible");
-      setState({ status: "ok", ...r });
+      const marked = r.html ? markVerses(r.html) : { html: null, ok: false };
+      setWrapOk(marked.ok);
+      setState({ status: "ok", ...r, html: marked.html || r.html });
     } catch (e) {
       setState({ status: "error", message: e.message });
     }
@@ -3404,69 +3469,7 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     window.scrollTo({ top: 0 });
   };
 
-  /* Wrap each verse in its own tappable span.
-     Done per block element rather than by walking the whole tree: a verse
-     can run across paragraphs and poetry lines, and wrapping across block
-     boundaries produces invalid nesting that the browser silently discards
-     — which is why the first attempt at this did nothing. */
   const [wrapOk, setWrapOk] = useState(true);
-
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root || state.status !== "ok") return;
-
-    try {
-      const marks = root.querySelectorAll(".verse-num, .chapter-num");
-      if (marks.length === 0) { setWrapOk(false); return; }
-      setWrapOk(true);
-
-      /* Carry the verse number across blocks: a paragraph can begin
-         mid-verse with no marker of its own. */
-      let carry = null;
-      const blocks = root.querySelectorAll("p, .block-indent, h3 + p, div.esvp > *");
-
-      const wrapBlock = (block) => {
-        const kids = [...block.childNodes];
-        let current = carry;
-        let bucket = [];
-
-        const flush = () => {
-          if (current == null || bucket.length === 0) { bucket = []; return; }
-          const span = document.createElement("span");
-          span.setAttribute("data-v", String(current));
-          block.insertBefore(span, bucket[0]);
-          bucket.forEach((n) => span.appendChild(n));
-          bucket = [];
-        };
-
-        kids.forEach((node) => {
-          const isMark = node.nodeType === 1 &&
-            (node.classList?.contains("verse-num") || node.classList?.contains("chapter-num"));
-          if (isMark) {
-            flush();
-            const n = parseInt(node.textContent.replace(/\D+/g, ""), 10);
-            if (!Number.isNaN(n)) current = n;
-            bucket.push(node);
-            return;
-          }
-          bucket.push(node);
-        });
-        flush();
-        carry = current;
-      };
-
-      blocks.forEach((b) => {
-        if (b.querySelector?.("[data-v]")) return;   // already wrapped
-        if (b.tagName === "H3") return;
-        wrapBlock(b);
-      });
-
-      if (root.querySelectorAll("[data-v]").length === 0) setWrapOk(false);
-    } catch (e) {
-      console.warn("Verse wrapping skipped:", e);
-      setWrapOk(false);
-    }
-  }, [state.status, state.html]);
 
   /* Paint highlights without re-fetching */
   useEffect(() => {
