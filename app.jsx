@@ -659,10 +659,19 @@ function GlobalStyle() {
       .sn-planopt .bl { font-size:12px; color:var(--ink-3); margin-top:2px; }
       .sn-planopt .ct { font-size:12px; font-weight:600; color:var(--ink-3); flex-shrink:0; }
 
-      .sn-loglist { margin-top:14px; border-top:1px solid var(--rule-soft); padding-top:4px; }
-      .sn-logrow { display:flex; align-items:center; justify-content:space-between;
-        font-size:13px; padding:7px 0; }
-      .sn-logrow .dt { font-size:11.5px; color:var(--ink-3); }
+      .sn-loglist { margin-top:16px; border-top:1px solid var(--rule-soft); padding-top:2px; }
+.sn-logrow { display:grid; width:100%; text-align:left; background:none; border:none;
+        grid-template-columns:1fr auto 18px; grid-template-areas:"ref date chev" "tags tags tags";
+        column-gap:12px; align-items:center; padding:11px 0; cursor:pointer;
+        border-bottom:1px solid var(--rule-soft); font-family:'Inter',system-ui,sans-serif; }
+      .sn-logrow .ref { grid-area:ref; font-size:14px; color:var(--ink); overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
+      .sn-logrow .dt { grid-area:date; font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+        color:var(--ink-3); white-space:nowrap; }
+      .sn-logrow .chev { grid-area:chev; font-size:15px; color:var(--ink-3); text-align:right;
+        line-height:1; }
+      .sn-logrow .tags { grid-area:tags; font-size:11.5px; color:#8A6410; margin-top:3px;
+        text-transform:capitalize; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
       /* ---------- topic shortcuts: the heart of the thing ---------- */
       /* topic search — small, sits above the shortcut pills */
@@ -788,8 +797,39 @@ function GlobalStyle() {
         padding:15px; margin-bottom:16px; }
       .sn-tagpanel-hd { display:flex; align-items:center; justify-content:space-between;
         gap:10px; margin-bottom:6px; font-size:14px; font-weight:600; }
-      .sn-logtags { font-size:11.5px; color:#8A6410; margin-left:9px; }
-      .sn-logopen { padding:2px 0 12px; border-bottom:1px solid var(--rule-soft); margin-bottom:4px; }
+      .sn-logopen { padding:10px 0 14px; border-bottom:1px solid var(--rule-soft); }
+
+      /* Bible tab */
+      .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
+        padding-bottom:14px; border-bottom:1px solid var(--rule); }
+      .sn-biblehd h2 { flex:1; margin:0; font-size:23px; font-weight:500; text-align:center;
+        letter-spacing:-.01em; }
+      .sn-stepbtn { background:none; border:1px solid var(--rule); border-radius:100px;
+        width:36px; height:36px; font-size:17px; color:var(--ink-2); cursor:pointer;
+        flex-shrink:0; line-height:1; }
+      .sn-stepbtn:active { background:var(--accent-wash); }
+
+      .sn-biblebody { font-size:18px; line-height:1.85; }
+      .sn-biblebody [data-v] { cursor:pointer; border-radius:3px;
+        transition:background .12s, box-shadow .12s; }
+      .sn-biblebody [data-v].hl { background:var(--ochre-wash);
+        box-shadow:0 0 0 2px var(--ochre-wash); }
+      .sn-biblebody [data-v].tagged { box-shadow:inset 0 -2px 0 var(--accent-wash); }
+      .sn-biblebody [data-v].sel { background:var(--accent-wash);
+        box-shadow:0 0 0 2px var(--accent-wash); }
+      .sn-biblebody .sn-esvhtml { font-size:18px; line-height:1.85; }
+
+      .sn-versebar { position:fixed; bottom:0; left:50%; transform:translateX(-50%);
+        width:100%; max-width:480px; background:var(--card); border-top:1px solid var(--rule);
+        box-shadow:0 -8px 28px rgba(120,80,40,.12); padding:14px 18px calc(16px + env(safe-area-inset-bottom));
+        z-index:40; max-height:62vh; overflow-y:auto; }
+      .sn-versebar-hd { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-bottom:10px; }
+      .sn-versebar-hd .sn-mono { font-size:14px; font-weight:600; color:#8A6410; }
+      .sn-hlbtn { width:100%; background:transparent; border:1px solid var(--ochre);
+        color:#8A6410; border-radius:var(--r); padding:11px; font-family:'Inter',system-ui,sans-serif;
+        font-size:14px; font-weight:600; cursor:pointer; }
+      .sn-hlbtn.on { background:var(--ochre-wash); }
 
       .sn-search { display:flex; align-items:center; gap:11px;
         border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
@@ -1062,7 +1102,9 @@ function GlobalStyle() {
         font-family:'Inter',sans-serif; font-size:15px; font-weight:500; color:var(--ink);
         min-height:48px; }
       .sn-drawer-item.on { background:var(--accent-wash); color:var(--accent-deep); font-weight:600; }
-      .sn-drawer-item .ico { font-size:15px; width:19px; text-align:center; color:var(--ink-3); }
+      .sn-drawer-item .ico { font-size:15px; width:19px; color:var(--ink-3);
+        display:flex; align-items:center; justify-content:center; }
+      .sn-drawer-item .ico svg { display:block; }
       .sn-drawer-item.on .ico { color:var(--accent); }
       .sn-drawer-item .ct { margin-left:auto; font-family:'IBM Plex Mono',monospace;
         font-size:11.5px; color:var(--ink-3); }
@@ -3252,6 +3294,221 @@ function SuggestedVerse({ refStr, topic, onAdd, onTagged }) {
 }
 
 /* ===============================================================
+   HIGHLIGHTS
+   ---------------------------------------------------------------
+   Per-verse marks, kept separately from topics so a verse can be
+   highlighted without being filed under anything.
+   =============================================================== */
+async function loadHighlights() {
+  try {
+    const r = await storage.get("verse-highlights");
+    return r ? JSON.parse(r.value) : {};
+  } catch { return {}; }
+}
+async function saveHighlights(h) {
+  try { await storage.set("verse-highlights", JSON.stringify(h)); return true; }
+  catch { return false; }
+}
+const HighlightsContext = React.createContext({ highlights: {}, toggleHighlight: () => {} });
+
+/* ===============================================================
+   BIBLE — read anything, mark it up as you go
+   =============================================================== */
+function BibleTab({ coverage, onMarkChapters, onDevotion }) {
+  const cfg = React.useContext(ScriptureContext);
+  const { topics, setTopicsFor } = React.useContext(TopicsContext);
+  const { highlights, toggleHighlight } = React.useContext(HighlightsContext);
+
+  const [picking, setPicking] = useState(false);
+  const [chapter, setChapter] = useState(null);      // { book, ch }
+  const [state, setState] = useState({ status: "idle" });
+  const [selected, setSelected] = useState(null);    // verse number tapped
+  const bodyRef = useRef(null);
+
+  const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
+  const book = chapter ? bookByName(chapter.book) : null;
+  const label = chapter ? `${chapter.book} ${chapter.ch}` : "";
+
+  const open = async (bk, ch) => {
+    setChapter({ book: bk, ch });
+    setSelected(null);
+    setState({ status: "loading" });
+    try {
+      const r = await getScripture(`${bk} ${ch}`, cfg, "reader");
+      setState({ status: "ok", ...r });
+    } catch (e) {
+      setState({ status: "error", message: e.message });
+    }
+  };
+
+  const step = (delta) => {
+    if (!book) return;
+    let { ch } = chapter;
+    let idx = BOOKS.findIndex((b) => b.name === chapter.book);
+    ch += delta;
+    if (ch < 1) { idx -= 1; if (idx < 0) return; ch = BOOKS[idx].verses.length; }
+    else if (ch > book.verses.length) { idx += 1; if (idx >= BOOKS.length) return; ch = 1; }
+    open(BOOKS[idx].name, ch);
+    window.scrollTo({ top: 0 });
+  };
+
+  /* Wrap each verse in its own tappable span. The API marks verse starts
+     with a .verse-num element; everything up to the next one belongs to
+     that verse, including across paragraphs and poetry lines. */
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || state.status !== "ok") return;
+    try {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      let current = null;
+      const groups = new Map();
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+
+      nodes.forEach((node) => {
+        if (node.nodeType === 1 && node.classList?.contains("verse-num")) {
+          const n = parseInt(node.textContent.trim(), 10);
+          if (!Number.isNaN(n)) { current = n; if (!groups.has(n)) groups.set(n, []); }
+          if (current) groups.get(current).push(node);
+          return;
+        }
+        if (node.nodeType === 3 && current && node.textContent.trim()) {
+          if (node.parentElement?.closest("[data-v]")) return;
+          groups.get(current).push(node);
+        }
+      });
+
+      groups.forEach((members, n) => {
+        members.forEach((node) => {
+          if (node.nodeType === 3) {
+            const span = document.createElement("span");
+            span.setAttribute("data-v", String(n));
+            node.parentNode.insertBefore(span, node);
+            span.appendChild(node);
+          } else {
+            node.setAttribute("data-v", String(n));
+          }
+        });
+      });
+
+      /* First verse has no number when the chapter opens mid-sentence */
+      if (!groups.has(1)) {
+        const first = root.querySelector("p");
+        if (first && !first.querySelector("[data-v]")) first.setAttribute("data-v", "1");
+      }
+    } catch (e) {
+      /* If the markup shape ever changes, reading still works — only
+         tap-to-tag is lost, which is the right thing to fail. */
+      console.warn("Verse wrapping skipped:", e);
+    }
+  }, [state.status, state.html]);
+
+  /* Paint highlights without re-fetching */
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || !chapter) return;
+    root.querySelectorAll("[data-v]").forEach((el) => {
+      const ref = `${chapter.book} ${chapter.ch}:${el.getAttribute("data-v")}`;
+      el.classList.toggle("hl", !!highlights[ref]);
+      el.classList.toggle("tagged", (topics[ref] || []).length > 0);
+      el.classList.toggle("sel", String(selected) === el.getAttribute("data-v"));
+    });
+  }, [highlights, topics, selected, state.status, chapter]);
+
+  const onBodyClick = (e) => {
+    const el = e.target.closest?.("[data-v]");
+    if (!el) return;
+    const n = parseInt(el.getAttribute("data-v"), 10);
+    setSelected((cur) => (cur === n ? null : n));
+  };
+
+  const selRef = chapter && selected ? `${chapter.book} ${chapter.ch}:${selected}` : null;
+  const done = chapter ? chapterDone(coverage, chapter.book, chapter.ch) : false;
+
+  return (
+    <div className="sn-scroll">
+      <div className="sn-search" onClick={() => setPicking(true)}>
+        <span className="ico">⌕</span>
+        <input readOnly value={label} placeholder="Choose a book, chapter and verse" />
+      </div>
+
+      {picking && (
+        <VersePicker onClose={() => setPicking(false)}
+          onPick={(ref) => {
+            const parsed = parseReading(ref);
+            if (parsed) open(parsed.book, parsed.ch);
+          }} />
+      )}
+
+      {!chapter && (
+        <div className="sn-empty">
+          <div className="ico">📖</div>
+          Pick a passage to read. Tap any verse while you're in it to highlight or tag it.
+        </div>
+      )}
+
+      {chapter && (
+        <>
+          <div className="sn-biblehd">
+            <button className="sn-stepbtn" onClick={() => step(-1)}>‹</button>
+            <h2 className="sn-serif">{label}</h2>
+            <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
+          </div>
+
+          {!hasKey && (
+            <div className="sn-callout">
+              Add your ESV key under Backup &amp; storage to read passages here.
+            </div>
+          )}
+          {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
+          {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
+
+          {state.status === "ok" && (
+            <>
+              <div className="sn-biblebody" ref={bodyRef} onClick={onBodyClick}>
+                {state.html
+                  ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
+                  : <div className="sn-scripture">{state.text}</div>}
+              </div>
+              <div className="sn-scripture-attr">
+                ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+              </div>
+            </>
+          )}
+
+          <div className="sn-readft">
+            <div className="sn-readft-lbl">Finished reading?</div>
+            <button className="sn-btn sn-btn-accent sn-btn-full"
+              onClick={() => onMarkChapters([{ book: chapter.book, ch: chapter.ch }])}>
+              {done ? "Marked as read" : "Mark as read"}
+            </button>
+            <button className="sn-btn sn-btn-ghost sn-btn-full" style={{ marginTop: 9 }}
+              onClick={() => onDevotion([{ book: chapter.book, ch: chapter.ch }])}>
+              Write a devotion on this
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* verse actions, anchored to the bottom while a verse is selected */}
+      {selRef && (
+        <div className="sn-versebar">
+          <div className="sn-versebar-hd">
+            <span className="sn-mono">{selRef}</span>
+            <button className="sn-x" onClick={() => setSelected(null)}>×</button>
+          </div>
+          <button className={"sn-hlbtn" + (highlights[selRef] ? " on" : "")}
+            onClick={() => toggleHighlight(selRef)}>
+            {highlights[selRef] ? "Remove highlight" : "Highlight this verse"}
+          </button>
+          <TopicTags refStr={selRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===============================================================
    READER — read the passage in the app, then act on it
    =============================================================== */
 function Reader({ target, coverage, onMarkRead, onDevotion, onBack }) {
@@ -3530,6 +3787,15 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom })
   const [showLog, setShowLog] = useState(false);
   const [openLog, setOpenLog] = useState(null);
   const { topics } = React.useContext(TopicsContext);
+
+  /* Collapse repeats: reading a passage twice shouldn't take two rows. */
+  const recentReads = useMemo(() => {
+    const seen = new Map();
+    [...(plan.log || [])].reverse().forEach((r) => {
+      if (!seen.has(r.ref)) seen.set(r.ref, r);
+    });
+    return [...seen.values()].slice(0, 5);
+  }, [plan.log]);
   const coverage = plan.coverage || {};
   const stats = useMemo(() => coverageStats(coverage, plan.scopeId), [coverage, plan.scopeId]);
   const pace = paceStatus(plan, stats);
@@ -3604,20 +3870,23 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom })
       {(plan.log || []).length > 0 && (
         <div className="sn-loglist">
           <div className="sn-sublbl" style={{ marginTop: 12 }}>Recently read</div>
-          {[...plan.log].slice(-5).reverse().map((r, i) => {
-            const key = r.ref + i;
-            const open = openLog === key;
-            const tagged = (topics[r.ref] || []).length;
+          {recentReads.map((r) => {
+            const open = openLog === r.ref;
+            const tags = topics[r.ref] || [];
             return (
-              <div key={key}>
-                <div className="sn-logrow" onClick={() => setOpenLog(open ? null : key)}>
-                  <span className="sn-mono">{r.ref}</span>
-                  {tagged > 0 && <span className="sn-logtags">{tagged} tag{tagged > 1 ? "s" : ""}</span>}
+              <div key={r.ref}>
+                <button className="sn-logrow" onClick={() => setOpenLog(open ? null : r.ref)}>
+                  <span className="ref sn-mono">{r.ref}</span>
                   <span className="dt">
-                    {new Date(r.on + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    {new Date(r.on + "T00:00:00").toLocaleDateString(undefined,
+                      { month: "short", day: "numeric" })}
                   </span>
                   <span className="chev">{open ? "−" : "+"}</span>
-                </div>
+                  {tags.length > 0 && (
+                    <span className="tags">{tags.slice(0, 3).join(" · ")}
+                      {tags.length > 3 ? ` +${tags.length - 3}` : ""}</span>
+                  )}
+                </button>
                 {open && (
                   <div className="sn-logopen">
                     <ScriptureText refStr={r.ref} compact />
@@ -3755,12 +4024,41 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
 /* ===============================================================
    DRAWER
    =============================================================== */
+/* Drawer icons drawn as SVG so they take the current text colour
+   instead of arriving as multicoloured emoji. */
+function DrawerIcon({ id, glyph }) {
+  const stroke = {
+    fill: "none", stroke: "currentColor", strokeWidth: 1.6,
+    strokeLinecap: "round", strokeLinejoin: "round",
+  };
+  if (id === "bible") {
+    return (
+      <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
+        <path d="M4.5 3.2h9.2a1.8 1.8 0 0 1 1.8 1.8v10a1.8 1.8 0 0 1-1.8 1.8H4.5z" {...stroke} />
+        <path d="M4.5 3.2a1.4 1.4 0 0 0 0 2.8" {...stroke} />
+        <path d="M10.2 7.6v4.6M8.2 9.4h4" {...stroke} />
+      </svg>
+    );
+  }
+  if (id === "library") {
+    return (
+      <svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true">
+        <path d="M10 5.6v10" {...stroke} />
+        <path d="M10 5.6C8.4 4.4 6.6 4 4 4v10c2.6 0 4.4.4 6 1.6" {...stroke} />
+        <path d="M10 5.6C11.6 4.4 13.4 4 16 4v10c-2.6 0-4.4.4-6 1.6" {...stroke} />
+      </svg>
+    );
+  }
+  return <span>{glyph}</span>;
+}
+
 function Drawer({ open, tab, onClose, onGo, counts }) {
   const items = [
     { id: "home",     icon: "⌂", label: "Home" },
     { id: "sermon",   icon: "✎", label: "New sermon" },
     { id: "devotion", icon: "✻", label: "New devotion" },
-    { id: "library",  icon: "📖", label: "Library", count: counts.entries },
+    { id: "bible",    icon: "", label: "Bible" },
+    { id: "library",  icon: "", label: "Library", count: counts.entries },
     { id: "verses",   icon: "🔎", label: "Verses", count: counts.verses },
     { id: "data",     icon: "⤓", label: "Backup & storage" },
     { id: "about",    icon: "©", label: "Copyright & about", foot: true },
@@ -3778,7 +4076,7 @@ function Drawer({ open, tab, onClose, onGo, counts }) {
           <button key={it.id}
             className={"sn-drawer-item" + (tab === it.id ? " on" : "") + (it.foot ? " foot" : "")}
             onClick={() => onGo(it.id)}>
-            <span className="ico">{it.icon}</span>
+            <span className="ico"><DrawerIcon id={it.id} glyph={it.icon} /></span>
             <span className="lbl">{it.label}</span>
             {it.count > 0 && <span className="ct">{it.count}</span>}
           </button>
@@ -4048,6 +4346,7 @@ function App() {
   const [topics, setTopics] = useState({});
   const [plan, setPlan] = useState(null);
   const [scripture, setScripture] = useState(defaultScripture());
+  const [highlights, setHighlights] = useState({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("home");
   const [drawer, setDrawer] = useState(false);
@@ -4060,6 +4359,7 @@ function App() {
 
   useEffect(() => {
     loadScripture().then(setScripture);
+    loadHighlights().then(setHighlights);
     Promise.all([loadNotes(), loadDevotions(), loadTopics(), loadPlan()]).then(([n, d, t, p]) => {
       setNotes(n); setDevotions(d); setTopics(t); setPlan(p);
       setLoading(false);
@@ -4079,6 +4379,14 @@ function App() {
   const topicsValue = useMemo(() => ({ topics, setTopicsFor }), [topics]);
 
   const saveEsv = async (cfg) => { setScripture(cfg); await saveScripture(cfg); };
+
+  const toggleHighlight = async (ref) => {
+    const next = { ...highlights };
+    if (next[ref]) delete next[ref]; else next[ref] = true;
+    setHighlights(next);
+    await saveHighlights(next);
+  };
+  const highlightsValue = useMemo(() => ({ highlights, toggleHighlight }), [highlights]);
 
   const entries = useMemo(
     () => [...notes.map((n) => ({ ...n, kind: "sermon" })), ...devotions],
@@ -4254,6 +4562,7 @@ function App() {
     devotion: editing ? "Edit devotion" : "New devotion",
     library: viewing ? (viewing.kind === "devotion" ? "Devotion" : "Sermon") : "Library",
     read: reading?.label || "Reading",
+    bible: "Bible",
     verses: "Verses",
     data: "Backup & storage",
     about: "Copyright & about",
@@ -4262,6 +4571,7 @@ function App() {
   return (
     <TopicsContext.Provider value={topicsValue}>
     <ScriptureContext.Provider value={scripture}>
+    <HighlightsContext.Provider value={highlightsValue}>
     <div className="sn-root">
       <GlobalStyle />
 
@@ -4325,6 +4635,11 @@ function App() {
           onBack={() => setTab("home")} />
       )}
 
+      {tab === "bible" && (
+        <BibleTab coverage={plan?.coverage || {}} onMarkChapters={markChapters}
+          onDevotion={devotionFromDay} />
+      )}
+
       {tab === "about" && <About scripture={scripture} />}
 
       {tab === "data" && (
@@ -4335,6 +4650,7 @@ function App() {
 
       {toast && <div className="sn-toast">{toast}</div>}
     </div>
+    </HighlightsContext.Provider>
     </ScriptureContext.Provider>
     </TopicsContext.Provider>
   );
