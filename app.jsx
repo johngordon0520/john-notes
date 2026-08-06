@@ -800,6 +800,12 @@ function GlobalStyle() {
       .sn-logopen { padding:10px 0 14px; border-bottom:1px solid var(--rule-soft); }
 
       /* Bible tab */
+      .sn-chapterhd { font-size:21px; font-weight:500; margin:2px 0 14px; }
+      .sn-searchalt { background:none; border:1px solid var(--rule); border-radius:100px;
+        font-family:'Inter',system-ui,sans-serif; font-size:12px; font-weight:600;
+        color:var(--ink-2); padding:6px 12px; cursor:pointer; flex-shrink:0; margin-left:4px; }
+      .sn-searchalt:active { background:var(--accent-wash); }
+
       .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
         padding-bottom:14px; border-bottom:1px solid var(--rule); }
       .sn-biblehd h2 { flex:1; margin:0; font-size:23px; font-weight:500; text-align:center;
@@ -1182,23 +1188,27 @@ function VersePicker({ onPick, onClose }) {
     return list;
   }, [q, testament]);
 
-  const commit = () => {
-    if (!book || !chapter || !vStart) return;
-    const ref = vEnd && vEnd !== vStart
-      ? `${book.name} ${chapter}:${Math.min(vStart, vEnd)}-${Math.max(vStart, vEnd)}`
-      : `${book.name} ${chapter}:${vStart}`;
-    onPick(ref);
+  /* Bounds can be passed explicitly so a confirming tap doesn't have to wait
+     for a state update it just triggered. */
+  const commit = (a, b) => {
+    if (!book || !chapter) return;
+    const lo = typeof a === "number" ? Math.min(a, b ?? a) : Math.min(vStart, vEnd ?? vStart);
+    const hi = typeof a === "number" ? Math.max(a, b ?? a) : Math.max(vStart, vEnd ?? vStart);
+    if (!lo) return;
+    onPick(lo === hi ? `${book.name} ${chapter}:${lo}` : `${book.name} ${chapter}:${lo}-${hi}`);
     onClose();
   };
 
+  /* Tapping the selected verse again confirms it, so a single verse takes
+     two taps in the same spot rather than a trip to the Add button. */
   const pickVerse = (v) => {
-    if (vStart === null || (vStart !== null && vEnd !== null)) {
-      setVStart(v); setVEnd(null);
-    } else if (v === vStart) {
-      setVEnd(null);
-    } else {
-      setVEnd(v);
+    if (vStart !== null && vEnd === null && v === vStart) { commit(v, v); return; }
+    if (vStart !== null && vEnd !== null && (v === vStart || v === vEnd)) {
+      commit(Math.min(vStart, vEnd), Math.max(vStart, vEnd));
+      return;
     }
+    if (vStart === null || vEnd !== null) { setVStart(v); setVEnd(null); }
+    else setVEnd(v);
   };
 
   const crumb = stage === "book" ? "Choose a book"
@@ -1247,7 +1257,8 @@ function VersePicker({ onPick, onClose }) {
               <div className="sn-grid">
                 {book.verses.map((_, i) => (
                   <button key={i} className="sn-cell"
-                    onClick={() => { setChapter(i + 1); setVStart(null); setVEnd(null); setStage("verse"); }}>
+                    onClick={() => { setChapter(i + 1); setVStart(null); setVEnd(null); setStage("verse"); }}
+                    onDoubleClick={() => { onPick(`${book.name} ${i + 1}`); onClose(); }}>
                     {i + 1}
                   </button>
                 ))}
@@ -1277,11 +1288,14 @@ function VersePicker({ onPick, onClose }) {
         {stage === "verse" && (
           <div className="sn-sheet-ft">
             <span className="sn-hint">
-              {vStart === null ? "Tap a verse. Tap a second for a range."
-                : vEnd ? `${book.name} ${chapter}:${Math.min(vStart, vEnd)}-${Math.max(vStart, vEnd)}`
-                : `${book.name} ${chapter}:${vStart} · tap another for a range`}
+              {vStart === null
+                ? "Tap a verse, then tap it again to add it."
+                : vEnd
+                  ? `${book.name} ${chapter}:${Math.min(vStart, vEnd)}-${Math.max(vStart, vEnd)} · tap either end to add`
+                  : `${book.name} ${chapter}:${vStart} · tap again to add, or another verse for a range`}
             </span>
-            <button className="sn-btn sn-btn-accent sn-btn-sm" disabled={vStart === null} onClick={commit}>Add</button>
+            <button className="sn-btn sn-btn-accent sn-btn-sm" disabled={vStart === null}
+              onClick={() => commit()}>Add</button>
           </div>
         )}
       </div>
@@ -2874,6 +2888,25 @@ const PRESETS = {
       "div-classes": "esvp",
     },
   }),
+  /* Reading with verse-level marking: numbers are always on, because they
+     are the anchors used to make each verse tappable. */
+  bible: (cfg) => ({
+    endpoint: "html",
+    params: {
+      "include-passage-references": "false",
+      "include-verse-numbers": "true",
+      "include-first-verse-numbers": "true",
+      "include-headings": cfg.headings ? "true" : "false",
+      "include-subheadings": cfg.headings ? "true" : "false",
+      "include-footnotes": "false",
+      "include-chapter-numbers": "false",
+      "include-audio-link": "false",
+      "include-short-copyright": "false",
+      "include-crossrefs": "false",
+      "wrapping-div": "true",
+      "div-classes": "esvp",
+    },
+  }),
   /* One verse in a card: no number floating in front of it, but poetry
      lines still break the way the ESV sets them. */
   verse: () => ({
@@ -2911,6 +2944,7 @@ function presetSignature(preset, cfg) {
   if (preset === "reader") {
     return `reader:${cfg.verseNumbers ? 1 : 0}${cfg.headings ? 1 : 0}${cfg.footnotes ? 1 : 0}`;
   }
+  if (preset === "bible") return `bible:${cfg.headings ? 1 : 0}`;
   return preset;
 }
 
@@ -3327,6 +3361,9 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
   const { highlights, toggleHighlight } = React.useContext(HighlightsContext);
 
   const [picking, setPicking] = useState(false);
+  const [q, setQ] = useState("");
+  const [testament, setTestament] = useState("All");
+  const [bookOpen, setBookOpen] = useState(null);
   const [chapter, setChapter] = useState(null);      // { book, ch }
   const [state, setState] = useState({ status: "idle" });
   const [selected, setSelected] = useState(null);    // verse number tapped
@@ -3335,6 +3372,12 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
 
   const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
   const book = chapter ? bookByName(chapter.book) : null;
+
+  const browseBooks = useMemo(() => {
+    let list = matchBooks(q);
+    if (testament !== "All") list = list.filter((b) => b.testament === testament);
+    return list;
+  }, [q, testament]);
   const label = chapter ? `${chapter.book} ${chapter.ch}` : "";
 
   const open = async (bk, ch, focus) => {
@@ -3343,7 +3386,7 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     setFocusRange(focus || null);
     setState({ status: "loading" });
     try {
-      const r = await getScripture(`${bk} ${ch}`, cfg, "reader");
+      const r = await getScripture(`${bk} ${ch}`, cfg, "bible");
       setState({ status: "ok", ...r });
     } catch (e) {
       setState({ status: "error", message: e.message });
@@ -3361,54 +3404,67 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     window.scrollTo({ top: 0 });
   };
 
-  /* Wrap each verse in its own tappable span. The API marks verse starts
-     with a .verse-num element; everything up to the next one belongs to
-     that verse, including across paragraphs and poetry lines. */
+  /* Wrap each verse in its own tappable span.
+     Done per block element rather than by walking the whole tree: a verse
+     can run across paragraphs and poetry lines, and wrapping across block
+     boundaries produces invalid nesting that the browser silently discards
+     — which is why the first attempt at this did nothing. */
+  const [wrapOk, setWrapOk] = useState(true);
+
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || state.status !== "ok") return;
+
     try {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-      let current = null;
-      const groups = new Map();
-      const nodes = [];
-      while (walker.nextNode()) nodes.push(walker.currentNode);
+      const marks = root.querySelectorAll(".verse-num, .chapter-num");
+      if (marks.length === 0) { setWrapOk(false); return; }
+      setWrapOk(true);
 
-      nodes.forEach((node) => {
-        if (node.nodeType === 1 && node.classList?.contains("verse-num")) {
-          const n = parseInt(node.textContent.trim(), 10);
-          if (!Number.isNaN(n)) { current = n; if (!groups.has(n)) groups.set(n, []); }
-          if (current) groups.get(current).push(node);
-          return;
-        }
-        if (node.nodeType === 3 && current && node.textContent.trim()) {
-          if (node.parentElement?.closest("[data-v]")) return;
-          groups.get(current).push(node);
-        }
-      });
+      /* Carry the verse number across blocks: a paragraph can begin
+         mid-verse with no marker of its own. */
+      let carry = null;
+      const blocks = root.querySelectorAll("p, .block-indent, h3 + p, div.esvp > *");
 
-      groups.forEach((members, n) => {
-        members.forEach((node) => {
-          if (node.nodeType === 3) {
-            const span = document.createElement("span");
-            span.setAttribute("data-v", String(n));
-            node.parentNode.insertBefore(span, node);
-            span.appendChild(node);
-          } else {
-            node.setAttribute("data-v", String(n));
+      const wrapBlock = (block) => {
+        const kids = [...block.childNodes];
+        let current = carry;
+        let bucket = [];
+
+        const flush = () => {
+          if (current == null || bucket.length === 0) { bucket = []; return; }
+          const span = document.createElement("span");
+          span.setAttribute("data-v", String(current));
+          block.insertBefore(span, bucket[0]);
+          bucket.forEach((n) => span.appendChild(n));
+          bucket = [];
+        };
+
+        kids.forEach((node) => {
+          const isMark = node.nodeType === 1 &&
+            (node.classList?.contains("verse-num") || node.classList?.contains("chapter-num"));
+          if (isMark) {
+            flush();
+            const n = parseInt(node.textContent.replace(/\D+/g, ""), 10);
+            if (!Number.isNaN(n)) current = n;
+            bucket.push(node);
+            return;
           }
+          bucket.push(node);
         });
+        flush();
+        carry = current;
+      };
+
+      blocks.forEach((b) => {
+        if (b.querySelector?.("[data-v]")) return;   // already wrapped
+        if (b.tagName === "H3") return;
+        wrapBlock(b);
       });
 
-      /* First verse has no number when the chapter opens mid-sentence */
-      if (!groups.has(1)) {
-        const first = root.querySelector("p");
-        if (first && !first.querySelector("[data-v]")) first.setAttribute("data-v", "1");
-      }
+      if (root.querySelectorAll("[data-v]").length === 0) setWrapOk(false);
     } catch (e) {
-      /* If the markup shape ever changes, reading still works — only
-         tap-to-tag is lost, which is the right thing to fail. */
       console.warn("Verse wrapping skipped:", e);
+      setWrapOk(false);
     }
   }, [state.status, state.html]);
 
@@ -3451,13 +3507,26 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
 
   return (
     <div className="sn-scroll">
-      <div className="sn-search" onClick={() => setPicking(true)}>
-        <span className="ico">⌕</span>
-        <input readOnly placeholder="Choose a book, chapter and verse"
-          value={label && focusRange
-            ? `${label}:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`
-            : label} />
-      </div>
+      {chapter ? (
+        <div className="sn-search" onClick={() => { setChapter(null); setBookOpen(null); setQ(""); }}>
+          <span className="ico">⌕</span>
+          <input readOnly placeholder="Choose a book, chapter and verse"
+            value={focusRange
+              ? `${label}:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`
+              : label} />
+          <button className="clear" onClick={(e) => {
+            e.stopPropagation(); setChapter(null); setBookOpen(null); setQ("");
+          }}>×</button>
+        </div>
+      ) : (
+        <div className="sn-search">
+          <span className="ico">⌕</span>
+          <input value={q} onChange={(e) => { setQ(e.target.value); setBookOpen(null); }}
+            placeholder="Jump to a book, or pick one below" />
+          {q && <button className="clear" onClick={() => setQ("")}>×</button>}
+          <button className="sn-searchalt" onClick={() => setPicking(true)}>Verse</button>
+        </div>
+      )}
 
       {picking && (
         <VersePicker onClose={() => setPicking(false)}
@@ -3471,10 +3540,48 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
       )}
 
       {!chapter && (
-        <div className="sn-empty">
-          <div className="ico">📖</div>
-          Pick a passage to read. Tap any verse while you're in it to highlight or tag it.
-        </div>
+        <>
+          <div className="sn-note" style={{ margin: "-4px 0 16px" }}>
+            Pick a book, then a chapter. Tap any verse while reading to highlight or tag it.
+          </div>
+
+          {!bookOpen ? (
+            <>
+              <div className="sn-tseg" style={{ marginBottom: 14 }}>
+                {["All", "Old", "New"].map((t) => (
+                  <button key={t} className={testament === t ? "on" : ""}
+                    onClick={() => setTestament(t)}>
+                    {t === "All" ? "All books" : `${t} Testament`}
+                  </button>
+                ))}
+              </div>
+              <div className="sn-booklist">
+                {browseBooks.map((b) => (
+                  <button className="sn-bookrow" key={b.name} onClick={() => setBookOpen(b)}>
+                    <span className="nm">{b.name}</span>
+                    <span className="ct">{b.verses.length} ch</span>
+                  </button>
+                ))}
+                {browseBooks.length === 0 && (
+                  <div className="sn-empty">No book matches that.</div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <button className="sn-back" onClick={() => setBookOpen(null)}>‹ All books</button>
+              <div className="sn-chapterhd sn-serif">{bookOpen.name}</div>
+              <div className="sn-grid">
+                {bookOpen.verses.map((_, i) => (
+                  <button key={i} className="sn-cell"
+                    onClick={() => { open(bookOpen.name, i + 1, null); setBookOpen(null); }}>
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {chapter && (
@@ -3509,6 +3616,12 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
                   ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
                   : <div className="sn-scripture">{state.text}</div>}
               </div>
+              {!wrapOk && (
+                <div className="sn-note warn">
+                  Verse marking isn't available for this passage — the text is
+                  still readable, and you can tag verses from the Verses tab.
+                </div>
+              )}
               <div className="sn-scripture-attr">
                 ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
               </div>
