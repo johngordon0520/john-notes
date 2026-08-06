@@ -819,6 +819,13 @@ function GlobalStyle() {
         box-shadow:0 0 0 2px var(--accent-wash); }
       .sn-biblebody .sn-esvhtml { font-size:18px; line-height:1.85; }
 
+      .sn-biblebody [data-v].focus { background:var(--ochre-wash); border-radius:3px;
+        box-shadow:0 0 0 2px var(--ochre-wash); }
+      .sn-focusnote { display:block; width:100%; text-align:left; background:none; border:none;
+        border-left:2px solid var(--ochre); padding:2px 0 2px 12px; margin:-6px 0 16px;
+        font-family:'Inter',system-ui,sans-serif; font-size:12.5px; color:var(--ink-3);
+        cursor:pointer; line-height:1.5; }
+
       .sn-versebar { position:fixed; bottom:0; left:50%; transform:translateX(-50%);
         width:100%; max-width:480px; background:var(--card); border-top:1px solid var(--rule);
         box-shadow:0 -8px 28px rgba(120,80,40,.12); padding:14px 18px calc(16px + env(safe-area-inset-bottom));
@@ -3323,15 +3330,17 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
   const [chapter, setChapter] = useState(null);      // { book, ch }
   const [state, setState] = useState({ status: "idle" });
   const [selected, setSelected] = useState(null);    // verse number tapped
+  const [focusRange, setFocusRange] = useState(null); // verses you asked for
   const bodyRef = useRef(null);
 
   const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
   const book = chapter ? bookByName(chapter.book) : null;
   const label = chapter ? `${chapter.book} ${chapter.ch}` : "";
 
-  const open = async (bk, ch) => {
+  const open = async (bk, ch, focus) => {
     setChapter({ book: bk, ch });
-    setSelected(null);
+    setSelected(focus ? focus.start : null);
+    setFocusRange(focus || null);
     setState({ status: "loading" });
     try {
       const r = await getScripture(`${bk} ${ch}`, cfg, "reader");
@@ -3348,7 +3357,7 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     ch += delta;
     if (ch < 1) { idx -= 1; if (idx < 0) return; ch = BOOKS[idx].verses.length; }
     else if (ch > book.verses.length) { idx += 1; if (idx >= BOOKS.length) return; ch = 1; }
-    open(BOOKS[idx].name, ch);
+    open(BOOKS[idx].name, ch, null);
     window.scrollTo({ top: 0 });
   };
 
@@ -3408,12 +3417,27 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     const root = bodyRef.current;
     if (!root || !chapter) return;
     root.querySelectorAll("[data-v]").forEach((el) => {
-      const ref = `${chapter.book} ${chapter.ch}:${el.getAttribute("data-v")}`;
+      const n = parseInt(el.getAttribute("data-v"), 10);
+      const ref = `${chapter.book} ${chapter.ch}:${n}`;
       el.classList.toggle("hl", !!highlights[ref]);
       el.classList.toggle("tagged", (topics[ref] || []).length > 0);
-      el.classList.toggle("sel", String(selected) === el.getAttribute("data-v"));
+      el.classList.toggle("sel", selected === n);
+      el.classList.toggle("focus",
+        !!focusRange && n >= focusRange.start && n <= focusRange.end);
     });
-  }, [highlights, topics, selected, state.status, chapter]);
+  }, [highlights, topics, selected, focusRange, state.status, chapter]);
+
+  /* Bring the verse you asked for into view rather than the top of the chapter */
+  useEffect(() => {
+    if (state.status !== "ok" || !focusRange) return;
+    const root = bodyRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-v="${focusRange.start}"]`);
+    if (el) {
+      requestAnimationFrame(() =>
+        el.scrollIntoView({ block: "center", behavior: "smooth" }));
+    }
+  }, [state.status, focusRange]);
 
   const onBodyClick = (e) => {
     const el = e.target.closest?.("[data-v]");
@@ -3429,14 +3453,20 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     <div className="sn-scroll">
       <div className="sn-search" onClick={() => setPicking(true)}>
         <span className="ico">⌕</span>
-        <input readOnly value={label} placeholder="Choose a book, chapter and verse" />
+        <input readOnly placeholder="Choose a book, chapter and verse"
+          value={label && focusRange
+            ? `${label}:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`
+            : label} />
       </div>
 
       {picking && (
         <VersePicker onClose={() => setPicking(false)}
           onPick={(ref) => {
             const parsed = parseReading(ref);
-            if (parsed) open(parsed.book, parsed.ch);
+            if (!parsed) return;
+            /* A chapter-only pick has no verses to focus; a verse or range does. */
+            const whole = parsed.start === 1 && parsed.end === (bookByName(parsed.book)?.verses[parsed.ch - 1] || 0);
+            open(parsed.book, parsed.ch, whole ? null : { start: parsed.start, end: parsed.end });
           }} />
       )}
 
@@ -3451,9 +3481,18 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
         <>
           <div className="sn-biblehd">
             <button className="sn-stepbtn" onClick={() => step(-1)}>‹</button>
-            <h2 className="sn-serif">{label}</h2>
+            <h2 className="sn-serif">
+              {label}{focusRange &&
+                `:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`}
+            </h2>
             <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
           </div>
+
+          {focusRange && (
+            <button className="sn-focusnote" onClick={() => { setFocusRange(null); setSelected(null); }}>
+              Showing the whole chapter · clear the highlight on those verses
+            </button>
+          )}
 
           {!hasKey && (
             <div className="sn-callout">
