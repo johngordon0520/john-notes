@@ -1,8 +1,5 @@
 /* ===============================================================
    John's Notes — offline sermon & devotion notebook
-   Runs entirely on-device. Notes never leave the phone. The only
-   outbound requests are ESV passage and search lookups, and only
-   if you add your own key or proxy in Backup & storage.
    =============================================================== */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -813,12 +810,13 @@ function GlobalStyle() {
       /* Bible tab */
       .sn-chapterhd { font-size:21px; font-weight:500; margin:2px 0 14px; }
 
-      .sn-tagzone { margin-top:28px; padding-top:20px; border-top:1px solid var(--rule); }
       .sn-tagzone-hd { display:flex; align-items:center; justify-content:space-between;
         gap:10px; margin-bottom:12px; font-size:11px; font-weight:600; letter-spacing:.12em;
         text-transform:uppercase; color:var(--ink-3); }
       .sn-cell.has { border-color:var(--accent); color:var(--accent-deep); font-weight:600;
         background:var(--accent-wash); }
+
+      .sn-tagzone { margin-top:28px; padding-top:20px; border-top:1px solid var(--rule); }
 
       .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
         padding-bottom:14px; border-bottom:1px solid var(--rule); }
@@ -833,6 +831,10 @@ function GlobalStyle() {
       .sn-biblebody .sn-esvhtml { font-size:18px; line-height:1.85; }
 
 
+
+      .sn-rawbox { min-height:220px; font-size:11px; line-height:1.5; resize:vertical;
+        border:1px solid var(--rule); border-radius:var(--r); padding:10px; white-space:pre-wrap;
+        word-break:break-all; background:var(--card); }
 
       .sn-search { display:flex; align-items:center; gap:11px;
         border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
@@ -3390,27 +3392,6 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
           <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
         </div>
 
-        {!hasKey && (
-          <div className="sn-callout">
-            Add your ESV key under Backup &amp; storage to read passages here.
-          </div>
-        )}
-        {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
-        {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
-
-        {state.status === "ok" && (
-          <>
-            <div className="sn-biblebody">
-              {state.html
-                ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
-                : <div className="sn-scripture">{state.text}</div>}
-            </div>
-            <div className="sn-scripture-attr">
-              ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
-            </div>
-          </>
-        )}
-
         <div className="sn-tagzone">
           {!tagging && !tagRef && (
             <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm"
@@ -3447,6 +3428,27 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
             </div>
           )}
         </div>
+
+        {!hasKey && (
+          <div className="sn-callout">
+            Add your ESV key under Backup &amp; storage to read passages here.
+          </div>
+        )}
+        {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
+        {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
+
+        {state.status === "ok" && (
+          <>
+            <div className="sn-biblebody">
+              {state.html
+                ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
+                : <div className="sn-scripture">{state.text}</div>}
+            </div>
+            <div className="sn-scripture-attr">
+              ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+            </div>
+          </>
+        )}
 
         <div className="sn-readft">
           <button className="sn-btn sn-btn-accent sn-btn-full"
@@ -4099,6 +4101,9 @@ function DataPanel({ notes, devotions, topics, plan, scripture, onSaveEsv, onImp
   const [esvTesting, setEsvTesting] = useState(false);
   const [esvResult, setEsvResult] = useState(null);
   const [esvCached, setEsvCached] = useState(0);
+  const [rawRef, setRawRef] = useState("John 1");
+  const [raw, setRaw] = useState(null);
+  const [rawBusy, setRawBusy] = useState(false);
   useEffect(() => { esvCacheLoad().then((c) => setEsvCached(cacheVerseCount(c))); }, []);
   const [persist, setPersist] = useState({ supported: false, persisted: false });
   const [est, setEst] = useState(null);
@@ -4303,6 +4308,39 @@ function DataPanel({ notes, devotions, topics, plan, scripture, onSaveEsv, onImp
           }}>Clear now</button></>
         )}
       </div>
+
+      <div className="sn-secttl">Markup inspector</div>
+      <div className="sn-note" style={{ marginBottom: 10 }}>
+        Temporary. Fetches one chapter and shows the exact markup Crossway
+        returns, so the verse-marking code can be written against real output
+        instead of guesswork. Nothing is saved.
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <input className="sn-input sn-mono" style={{ flex: 1 }} placeholder="John 1"
+          value={rawRef} onChange={(e) => setRawRef(e.target.value)} />
+        <button className="sn-btn sn-btn-ghost sn-btn-sm" disabled={rawBusy}
+          onClick={async () => {
+            setRawBusy(true); setRaw(null);
+            try {
+              /* Straight from the API, bypassing the cache, so what you copy
+                 is what the app actually receives. */
+              const r = await fetchESV(rawRef.trim() || "John 1", scripture, "reader");
+              setRaw(r.html || r.text || "(empty)");
+            } catch (e) { setRaw("ERROR: " + e.message); }
+            setRawBusy(false);
+          }}>{rawBusy ? "Fetching…" : "Fetch"}</button>
+      </div>
+
+      {raw && (
+        <>
+          <textarea className="sn-input sn-mono sn-rawbox" readOnly value={raw}
+            onFocus={(e) => e.target.select()} />
+          <div className="sn-note">
+            Tap the box to select all, then copy. The first 2,000 characters are
+            enough — that covers a heading, prose, and usually some poetry.
+          </div>
+        </>
+      )}
 
       <div className="sn-secttl">Storage</div>
       <div className="sn-statrow">
