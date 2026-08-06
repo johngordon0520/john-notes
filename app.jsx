@@ -491,6 +491,17 @@ function GlobalStyle() {
          ============================================================== */
 
       * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+      /* Controls should never take a text selection — double-tapping one was
+         painting a blue block across the browse list. Scripture and inputs
+         stay selectable so verses can still be copied. */
+      .sn-root { user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+      .sn-biblebody, .sn-scripture, .sn-esvhtml, .sn-dtl-txt, .sn-gist-read,
+      .sn-hit-text, .sn-card .snip, input, textarea {
+        user-select:text; -webkit-user-select:text; -webkit-touch-callout:default;
+      }
+      ::selection { background:var(--ochre-wash); color:var(--ink); }
+      ::-moz-selection { background:var(--ochre-wash); color:var(--ink); }
       html, body { margin:0; padding:0; background:#F7F3EA; }
 
       .sn-root {
@@ -801,10 +812,6 @@ function GlobalStyle() {
 
       /* Bible tab */
       .sn-chapterhd { font-size:21px; font-weight:500; margin:2px 0 14px; }
-      .sn-searchalt { background:none; border:1px solid var(--rule); border-radius:100px;
-        font-family:'Inter',system-ui,sans-serif; font-size:12px; font-weight:600;
-        color:var(--ink-2); padding:6px 12px; cursor:pointer; flex-shrink:0; margin-left:4px; }
-      .sn-searchalt:active { background:var(--accent-wash); }
 
       .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
         padding-bottom:14px; border-bottom:1px solid var(--rule); }
@@ -816,33 +823,9 @@ function GlobalStyle() {
       .sn-stepbtn:active { background:var(--accent-wash); }
 
       .sn-biblebody { font-size:18px; line-height:1.85; }
-      .sn-biblebody [data-v] { cursor:pointer; border-radius:3px;
-        transition:background .12s, box-shadow .12s; }
-      .sn-biblebody [data-v].hl { background:var(--ochre-wash);
-        box-shadow:0 0 0 2px var(--ochre-wash); }
-      .sn-biblebody [data-v].tagged { box-shadow:inset 0 -2px 0 var(--accent-wash); }
-      .sn-biblebody [data-v].sel { background:var(--accent-wash);
-        box-shadow:0 0 0 2px var(--accent-wash); }
       .sn-biblebody .sn-esvhtml { font-size:18px; line-height:1.85; }
 
-      .sn-biblebody [data-v].focus { background:var(--ochre-wash); border-radius:3px;
-        box-shadow:0 0 0 2px var(--ochre-wash); }
-      .sn-focusnote { display:block; width:100%; text-align:left; background:none; border:none;
-        border-left:2px solid var(--ochre); padding:2px 0 2px 12px; margin:-6px 0 16px;
-        font-family:'Inter',system-ui,sans-serif; font-size:12.5px; color:var(--ink-3);
-        cursor:pointer; line-height:1.5; }
 
-      .sn-versebar { position:fixed; bottom:0; left:50%; transform:translateX(-50%);
-        width:100%; max-width:480px; background:var(--card); border-top:1px solid var(--rule);
-        box-shadow:0 -8px 28px rgba(120,80,40,.12); padding:14px 18px calc(16px + env(safe-area-inset-bottom));
-        z-index:40; max-height:62vh; overflow-y:auto; }
-      .sn-versebar-hd { display:flex; align-items:center; justify-content:space-between;
-        gap:10px; margin-bottom:10px; }
-      .sn-versebar-hd .sn-mono { font-size:14px; font-weight:600; color:#8A6410; }
-      .sn-hlbtn { width:100%; background:transparent; border:1px solid var(--ochre);
-        color:#8A6410; border-radius:var(--r); padding:11px; font-family:'Inter',system-ui,sans-serif;
-        font-size:14px; font-weight:600; cursor:pointer; }
-      .sn-hlbtn.on { background:var(--ochre-wash); }
 
       .sn-search { display:flex; align-items:center; gap:11px;
         border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
@@ -3340,119 +3323,32 @@ function SuggestedVerse({ refStr, topic, onAdd, onTagged }) {
 }
 
 /* ===============================================================
-   HIGHLIGHTS
-   ---------------------------------------------------------------
-   Per-verse marks, kept separately from topics so a verse can be
-   highlighted without being filed under anything.
-   =============================================================== */
-async function loadHighlights() {
-  try {
-    const r = await storage.get("verse-highlights");
-    return r ? JSON.parse(r.value) : {};
-  } catch { return {}; }
-}
-async function saveHighlights(h) {
-  try { await storage.set("verse-highlights", JSON.stringify(h)); return true; }
-  catch { return false; }
-}
-const HighlightsContext = React.createContext({ highlights: {}, toggleHighlight: () => {} });
-
-/* Wrap each verse in a tappable span, working on the markup string before
-   React renders it. Doing this afterwards by mutating the DOM was fragile:
-   the timing depended on effects running after paint, and any re-render
-   could discard the changes. This way the spans are part of the markup. */
-function markVerses(html) {
-  try {
-    if (typeof DOMParser === "undefined") return { html, ok: false };
-    const doc = new DOMParser().parseFromString(`<div id="r">${html}</div>`, "text/html");
-    const root = doc.getElementById("r");
-    if (!root) return { html, ok: false };
-
-    const marks = root.querySelectorAll(".verse-num, .chapter-num");
-    if (marks.length === 0) return { html, ok: false };
-
-    /* A verse runs until the next number, crossing paragraphs and poetry
-       lines, so wrap per block and carry the number forward. */
-    let carry = null;
-    const blocks = [...root.querySelectorAll("p, .block-indent")];
-    if (blocks.length === 0) blocks.push(root);
-
-    blocks.forEach((block) => {
-      const kids = [...block.childNodes];
-      let current = carry;
-      let bucket = [];
-
-      const flush = () => {
-        if (current == null || bucket.length === 0) { bucket = []; return; }
-        const span = doc.createElement("span");
-        span.setAttribute("data-v", String(current));
-        block.insertBefore(span, bucket[0]);
-        bucket.forEach((n) => span.appendChild(n));
-        bucket = [];
-      };
-
-      kids.forEach((node) => {
-        const isMark = node.nodeType === 1 &&
-          (node.classList?.contains("verse-num") || node.classList?.contains("chapter-num"));
-        if (isMark) {
-          flush();
-          const n = parseInt((node.textContent || "").replace(/\D+/g, ""), 10);
-          if (!Number.isNaN(n)) current = n;
-          bucket.push(node);
-          return;
-        }
-        bucket.push(node);
-      });
-      flush();
-      carry = current;
-    });
-
-    const out = root.innerHTML;
-    return { html: out, ok: out.includes("data-v=") };
-  } catch (e) {
-    console.warn("Verse marking failed:", e);
-    return { html, ok: false };
-  }
-}
-
-/* ===============================================================
-   BIBLE — read anything, mark it up as you go
+   BIBLE — pick a book, pick a chapter, read it
    =============================================================== */
 function BibleTab({ coverage, onMarkChapters, onDevotion }) {
   const cfg = React.useContext(ScriptureContext);
-  const { topics, setTopicsFor } = React.useContext(TopicsContext);
-  const { highlights, toggleHighlight } = React.useContext(HighlightsContext);
-
-  const [picking, setPicking] = useState(false);
   const [q, setQ] = useState("");
   const [testament, setTestament] = useState("All");
   const [bookOpen, setBookOpen] = useState(null);
   const [chapter, setChapter] = useState(null);      // { book, ch }
   const [state, setState] = useState({ status: "idle" });
-  const [selected, setSelected] = useState(null);    // verse number tapped
-  const [focusRange, setFocusRange] = useState(null); // verses you asked for
-  const bodyRef = useRef(null);
 
   const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
   const book = chapter ? bookByName(chapter.book) : null;
+  const label = chapter ? `${chapter.book} ${chapter.ch}` : "";
 
   const browseBooks = useMemo(() => {
     let list = matchBooks(q);
     if (testament !== "All") list = list.filter((b) => b.testament === testament);
     return list;
   }, [q, testament]);
-  const label = chapter ? `${chapter.book} ${chapter.ch}` : "";
 
-  const open = async (bk, ch, focus) => {
+  const open = async (bk, ch) => {
     setChapter({ book: bk, ch });
-    setSelected(focus ? focus.start : null);
-    setFocusRange(focus || null);
     setState({ status: "loading" });
+    window.scrollTo({ top: 0 });
     try {
-      const r = await getScripture(`${bk} ${ch}`, cfg, "bible");
-      const marked = r.html ? markVerses(r.html) : { html: null, ok: false };
-      setWrapOk(marked.ok);
-      setState({ status: "ok", ...r, html: marked.html || r.html });
+      setState({ status: "ok", ...(await getScripture(`${bk} ${ch}`, cfg, "reader")) });
     } catch (e) {
       setState({ status: "error", message: e.message });
     }
@@ -3465,199 +3361,101 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     ch += delta;
     if (ch < 1) { idx -= 1; if (idx < 0) return; ch = BOOKS[idx].verses.length; }
     else if (ch > book.verses.length) { idx += 1; if (idx >= BOOKS.length) return; ch = 1; }
-    open(BOOKS[idx].name, ch, null);
-    window.scrollTo({ top: 0 });
+    open(BOOKS[idx].name, ch);
   };
 
-  const [wrapOk, setWrapOk] = useState(true);
-
-  /* Paint highlights without re-fetching */
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root || !chapter) return;
-    root.querySelectorAll("[data-v]").forEach((el) => {
-      const n = parseInt(el.getAttribute("data-v"), 10);
-      const ref = `${chapter.book} ${chapter.ch}:${n}`;
-      el.classList.toggle("hl", !!highlights[ref]);
-      el.classList.toggle("tagged", (topics[ref] || []).length > 0);
-      el.classList.toggle("sel", selected === n);
-      el.classList.toggle("focus",
-        !!focusRange && n >= focusRange.start && n <= focusRange.end);
-    });
-  }, [highlights, topics, selected, focusRange, state.status, chapter]);
-
-  /* Bring the verse you asked for into view rather than the top of the chapter */
-  useEffect(() => {
-    if (state.status !== "ok" || !focusRange) return;
-    const root = bodyRef.current;
-    if (!root) return;
-    const el = root.querySelector(`[data-v="${focusRange.start}"]`);
-    if (el) {
-      requestAnimationFrame(() =>
-        el.scrollIntoView({ block: "center", behavior: "smooth" }));
-    }
-  }, [state.status, focusRange]);
-
-  const onBodyClick = (e) => {
-    const el = e.target.closest?.("[data-v]");
-    if (!el) return;
-    const n = parseInt(el.getAttribute("data-v"), 10);
-    setSelected((cur) => (cur === n ? null : n));
-  };
-
-  const selRef = chapter && selected ? `${chapter.book} ${chapter.ch}:${selected}` : null;
+  const back = () => { setChapter(null); setBookOpen(null); setState({ status: "idle" }); };
   const done = chapter ? chapterDone(coverage, chapter.book, chapter.ch) : false;
 
+  /* ---------- reading ---------- */
+  if (chapter) {
+    return (
+      <div className="sn-scroll">
+        <button className="sn-back" onClick={back}>‹ All books</button>
+
+        <div className="sn-biblehd">
+          <button className="sn-stepbtn" onClick={() => step(-1)}>‹</button>
+          <h2 className="sn-serif">{label}</h2>
+          <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
+        </div>
+
+        {!hasKey && (
+          <div className="sn-callout">
+            Add your ESV key under Backup &amp; storage to read passages here.
+          </div>
+        )}
+        {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
+        {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
+
+        {state.status === "ok" && (
+          <>
+            <div className="sn-biblebody">
+              {state.html
+                ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
+                : <div className="sn-scripture">{state.text}</div>}
+            </div>
+            <div className="sn-scripture-attr">
+              ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+            </div>
+          </>
+        )}
+
+        <div className="sn-readft">
+          <button className="sn-btn sn-btn-accent sn-btn-full"
+            onClick={() => onMarkChapters([{ book: chapter.book, ch: chapter.ch }])}>
+            {done ? "Marked as read" : "Mark as read"}
+          </button>
+          <button className="sn-btn sn-btn-ghost sn-btn-full" style={{ marginTop: 9 }}
+            onClick={() => onDevotion([{ book: chapter.book, ch: chapter.ch }])}>
+            Write a devotion on this
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- choosing ---------- */
   return (
     <div className="sn-scroll">
-      {chapter ? (
-        <div className="sn-search" onClick={() => { setChapter(null); setBookOpen(null); setQ(""); }}>
-          <span className="ico">⌕</span>
-          <input readOnly placeholder="Choose a book, chapter and verse"
-            value={focusRange
-              ? `${label}:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`
-              : label} />
-          <button className="clear" onClick={(e) => {
-            e.stopPropagation(); setChapter(null); setBookOpen(null); setQ("");
-          }}>×</button>
-        </div>
+      <div className="sn-search">
+        <span className="ico">⌕</span>
+        <input value={q} onChange={(e) => { setQ(e.target.value); setBookOpen(null); }}
+          placeholder="Find a book" />
+        {q && <button className="clear" onClick={() => setQ("")}>×</button>}
+      </div>
+
+      {!bookOpen ? (
+        <>
+          <div className="sn-tseg" style={{ marginBottom: 14 }}>
+            {["All", "Old", "New"].map((t) => (
+              <button key={t} className={testament === t ? "on" : ""}
+                onClick={() => setTestament(t)}>
+                {t === "All" ? "All books" : `${t} Testament`}
+              </button>
+            ))}
+          </div>
+          <div className="sn-booklist">
+            {browseBooks.map((b) => (
+              <button className="sn-bookrow" key={b.name} onClick={() => setBookOpen(b)}>
+                <span className="nm">{b.name}</span>
+                <span className="ct">{b.verses.length} ch</span>
+              </button>
+            ))}
+            {browseBooks.length === 0 && <div className="sn-empty">No book matches that.</div>}
+          </div>
+        </>
       ) : (
-        <div className="sn-search">
-          <span className="ico">⌕</span>
-          <input value={q} onChange={(e) => { setQ(e.target.value); setBookOpen(null); }}
-            placeholder="Jump to a book, or pick one below" />
-          {q && <button className="clear" onClick={() => setQ("")}>×</button>}
-          <button className="sn-searchalt" onClick={() => setPicking(true)}>Verse</button>
-        </div>
-      )}
-
-      {picking && (
-        <VersePicker onClose={() => setPicking(false)}
-          onPick={(ref) => {
-            const parsed = parseReading(ref);
-            if (!parsed) return;
-            /* A chapter-only pick has no verses to focus; a verse or range does. */
-            const whole = parsed.start === 1 && parsed.end === (bookByName(parsed.book)?.verses[parsed.ch - 1] || 0);
-            open(parsed.book, parsed.ch, whole ? null : { start: parsed.start, end: parsed.end });
-          }} />
-      )}
-
-      {!chapter && (
         <>
-          <div className="sn-note" style={{ margin: "-4px 0 16px" }}>
-            Pick a book, then a chapter. Tap any verse while reading to highlight or tag it.
-          </div>
-
-          {!bookOpen ? (
-            <>
-              <div className="sn-tseg" style={{ marginBottom: 14 }}>
-                {["All", "Old", "New"].map((t) => (
-                  <button key={t} className={testament === t ? "on" : ""}
-                    onClick={() => setTestament(t)}>
-                    {t === "All" ? "All books" : `${t} Testament`}
-                  </button>
-                ))}
-              </div>
-              <div className="sn-booklist">
-                {browseBooks.map((b) => (
-                  <button className="sn-bookrow" key={b.name} onClick={() => setBookOpen(b)}>
-                    <span className="nm">{b.name}</span>
-                    <span className="ct">{b.verses.length} ch</span>
-                  </button>
-                ))}
-                {browseBooks.length === 0 && (
-                  <div className="sn-empty">No book matches that.</div>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <button className="sn-back" onClick={() => setBookOpen(null)}>‹ All books</button>
-              <div className="sn-chapterhd sn-serif">{bookOpen.name}</div>
-              <div className="sn-grid">
-                {bookOpen.verses.map((_, i) => (
-                  <button key={i} className="sn-cell"
-                    onClick={() => { open(bookOpen.name, i + 1, null); setBookOpen(null); }}>
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {chapter && (
-        <>
-          <div className="sn-biblehd">
-            <button className="sn-stepbtn" onClick={() => step(-1)}>‹</button>
-            <h2 className="sn-serif">
-              {label}{focusRange &&
-                `:${focusRange.start}${focusRange.end > focusRange.start ? `-${focusRange.end}` : ""}`}
-            </h2>
-            <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
-          </div>
-
-          {focusRange && (
-            <button className="sn-focusnote" onClick={() => { setFocusRange(null); setSelected(null); }}>
-              Showing the whole chapter · clear the highlight on those verses
-            </button>
-          )}
-
-          {!hasKey && (
-            <div className="sn-callout">
-              Add your ESV key under Backup &amp; storage to read passages here.
-            </div>
-          )}
-          {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
-          {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
-
-          {state.status === "ok" && (
-            <>
-              <div className="sn-biblebody" ref={bodyRef} onClick={onBodyClick}>
-                {state.html
-                  ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
-                  : <div className="sn-scripture">{state.text}</div>}
-              </div>
-              {!wrapOk && (
-                <div className="sn-note warn">
-                  Verse marking isn't available for this passage — the text is
-                  still readable, and you can tag verses from the Verses tab.
-                </div>
-              )}
-              <div className="sn-scripture-attr">
-                ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
-              </div>
-            </>
-          )}
-
-          <div className="sn-readft">
-            <div className="sn-readft-lbl">Finished reading?</div>
-            <button className="sn-btn sn-btn-accent sn-btn-full"
-              onClick={() => onMarkChapters([{ book: chapter.book, ch: chapter.ch }])}>
-              {done ? "Marked as read" : "Mark as read"}
-            </button>
-            <button className="sn-btn sn-btn-ghost sn-btn-full" style={{ marginTop: 9 }}
-              onClick={() => onDevotion([{ book: chapter.book, ch: chapter.ch }])}>
-              Write a devotion on this
-            </button>
+          <button className="sn-back" onClick={() => setBookOpen(null)}>‹ All books</button>
+          <div className="sn-chapterhd sn-serif">{bookOpen.name}</div>
+          <div className="sn-grid">
+            {bookOpen.verses.map((_, i) => (
+              <button key={i} className="sn-cell" onClick={() => open(bookOpen.name, i + 1)}>
+                {i + 1}
+              </button>
+            ))}
           </div>
         </>
-      )}
-
-      {/* verse actions, anchored to the bottom while a verse is selected */}
-      {selRef && (
-        <div className="sn-versebar">
-          <div className="sn-versebar-hd">
-            <span className="sn-mono">{selRef}</span>
-            <button className="sn-x" onClick={() => setSelected(null)}>×</button>
-          </div>
-          <button className={"sn-hlbtn" + (highlights[selRef] ? " on" : "")}
-            onClick={() => toggleHighlight(selRef)}>
-            {highlights[selRef] ? "Remove highlight" : "Highlight this verse"}
-          </button>
-          <TopicTags refStr={selRef} />
-        </div>
       )}
     </div>
   );
@@ -4501,7 +4299,6 @@ function App() {
   const [topics, setTopics] = useState({});
   const [plan, setPlan] = useState(null);
   const [scripture, setScripture] = useState(defaultScripture());
-  const [highlights, setHighlights] = useState({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("home");
   const [drawer, setDrawer] = useState(false);
@@ -4514,7 +4311,6 @@ function App() {
 
   useEffect(() => {
     loadScripture().then(setScripture);
-    loadHighlights().then(setHighlights);
     Promise.all([loadNotes(), loadDevotions(), loadTopics(), loadPlan()]).then(([n, d, t, p]) => {
       setNotes(n); setDevotions(d); setTopics(t); setPlan(p);
       setLoading(false);
@@ -4535,13 +4331,6 @@ function App() {
 
   const saveEsv = async (cfg) => { setScripture(cfg); await saveScripture(cfg); };
 
-  const toggleHighlight = async (ref) => {
-    const next = { ...highlights };
-    if (next[ref]) delete next[ref]; else next[ref] = true;
-    setHighlights(next);
-    await saveHighlights(next);
-  };
-  const highlightsValue = useMemo(() => ({ highlights, toggleHighlight }), [highlights]);
 
   const entries = useMemo(
     () => [...notes.map((n) => ({ ...n, kind: "sermon" })), ...devotions],
@@ -4726,7 +4515,6 @@ function App() {
   return (
     <TopicsContext.Provider value={topicsValue}>
     <ScriptureContext.Provider value={scripture}>
-    <HighlightsContext.Provider value={highlightsValue}>
     <div className="sn-root">
       <GlobalStyle />
 
@@ -4805,7 +4593,6 @@ function App() {
 
       {toast && <div className="sn-toast">{toast}</div>}
     </div>
-    </HighlightsContext.Provider>
     </ScriptureContext.Provider>
     </TopicsContext.Provider>
   );

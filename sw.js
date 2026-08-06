@@ -3,7 +3,7 @@
    served from the cache, so the app opens with no connection at all.
    Bump CACHE_VERSION whenever you change app.jsx or index.html. */
 
-const CACHE_VERSION = "johns-notes-v21";
+const CACHE_VERSION = "johns-notes-v22";
 
 const PRECACHE = [
   "./",
