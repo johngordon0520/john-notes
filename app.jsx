@@ -2,7 +2,7 @@
    John's Notes — offline sermon & devotion notebook
    Runs entirely on-device. Notes never leave the phone. The only
    outbound requests are ESV passage and search lookups, and only
-   if you add your own key in Backup & storage.
+   if you add your own key or proxy in Backup & storage.
    =============================================================== */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -812,6 +812,13 @@ function GlobalStyle() {
 
       /* Bible tab */
       .sn-chapterhd { font-size:21px; font-weight:500; margin:2px 0 14px; }
+
+      .sn-tagzone { margin-top:28px; padding-top:20px; border-top:1px solid var(--rule); }
+      .sn-tagzone-hd { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-bottom:12px; font-size:11px; font-weight:600; letter-spacing:.12em;
+        text-transform:uppercase; color:var(--ink-3); }
+      .sn-cell.has { border-color:var(--accent); color:var(--accent-deep); font-weight:600;
+        background:var(--accent-wash); }
 
       .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
         padding-bottom:14px; border-bottom:1px solid var(--rule); }
@@ -3327,11 +3334,14 @@ function SuggestedVerse({ refStr, topic, onAdd, onTagged }) {
    =============================================================== */
 function BibleTab({ coverage, onMarkChapters, onDevotion }) {
   const cfg = React.useContext(ScriptureContext);
+  const { topics } = React.useContext(TopicsContext);
   const [q, setQ] = useState("");
   const [testament, setTestament] = useState("All");
   const [bookOpen, setBookOpen] = useState(null);
   const [chapter, setChapter] = useState(null);      // { book, ch }
   const [state, setState] = useState({ status: "idle" });
+  const [tagging, setTagging] = useState(false);     // verse grid open
+  const [tagRef, setTagRef] = useState(null);        // verse being tagged
 
   const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
   const book = chapter ? bookByName(chapter.book) : null;
@@ -3345,6 +3355,7 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
 
   const open = async (bk, ch) => {
     setChapter({ book: bk, ch });
+    setTagging(false); setTagRef(null);
     setState({ status: "loading" });
     window.scrollTo({ top: 0 });
     try {
@@ -3399,6 +3410,43 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
             </div>
           </>
         )}
+
+        <div className="sn-tagzone">
+          {!tagging && !tagRef && (
+            <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm"
+              onClick={() => setTagging(true)}>Tag a verse from this chapter</button>
+          )}
+
+          {tagging && !tagRef && book && (
+            <>
+              <div className="sn-tagzone-hd">
+                <span>Which verse?</span>
+                <button className="sn-link" onClick={() => setTagging(false)}>Cancel</button>
+              </div>
+              <div className="sn-grid verses">
+                {Array.from({ length: book.verses[chapter.ch - 1] }, (_, i) => i + 1).map((v) => {
+                  const ref = `${chapter.book} ${chapter.ch}:${v}`;
+                  const has = (topics[ref] || []).length > 0;
+                  return (
+                    <button key={v} className={"sn-cell" + (has ? " has" : "")}
+                      onClick={() => { setTagRef(ref); setTagging(false); }}>{v}</button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {tagRef && (
+            <div className="sn-tagpanel">
+              <div className="sn-tagpanel-hd">
+                <span className="sn-mono">{tagRef}</span>
+                <button className="sn-link" onClick={() => setTagRef(null)}>Done</button>
+              </div>
+              <ScriptureText refStr={tagRef} preset="verse" />
+              <TopicTags refStr={tagRef} />
+            </div>
+          )}
+        </div>
 
         <div className="sn-readft">
           <button className="sn-btn sn-btn-accent sn-btn-full"
