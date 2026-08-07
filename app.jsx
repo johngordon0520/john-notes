@@ -818,6 +818,21 @@ function GlobalStyle() {
 
       .sn-tagzone { margin-top:28px; padding-top:20px; border-top:1px solid var(--rule); }
 
+      /* tappable verses */
+      .sn-biblebody .jn-v { cursor:pointer; border-radius:3px; padding:1px 0;
+        transition:background .12s, box-shadow .12s; }
+      .sn-biblebody .jn-v.has { box-shadow:inset 0 -2px 0 var(--accent-wash); }
+      .sn-biblebody .jn-v.on { background:var(--ochre-wash);
+        box-shadow:0 0 0 3px var(--ochre-wash); }
+      .sn-biblebody .jn-v .verse-num { pointer-events:none; }
+
+      .sn-selbar { position:sticky; bottom:10px; z-index:30; background:var(--card);
+        border:1px solid var(--accent); border-radius:var(--r); padding:14px;
+        margin:18px 0 4px; box-shadow:0 8px 28px rgba(120,80,40,.16); }
+      .sn-selbar-hd { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-bottom:2px; }
+      .sn-selbar-hd .sn-mono { font-size:14px; font-weight:600; color:#8A6410; }
+
       .sn-biblehd { display:flex; align-items:center; gap:12px; margin:4px 0 18px;
         padding-bottom:14px; border-bottom:1px solid var(--rule); }
       .sn-biblehd h2 { flex:1; margin:0; font-size:23px; font-weight:500; text-align:center;
@@ -3331,6 +3346,72 @@ function SuggestedVerse({ refStr, topic, onAdd, onTagged }) {
   );
 }
 
+/* ---------------------------------------------------------------
+   Verse marking, written against real ESV output.
+
+   Every verse number arrives as <b class="verse-num" id="v43001038-1">,
+   where the id encodes book(2) chapter(3) verse(3). Reading the number
+   from the id is exact — no parsing of visible text, no guessing.
+
+   A verse runs from its number until the next one, and can cross
+   paragraphs, so wrapping happens per block with the number carried
+   forward. Words of Christ (<span class="woc">) sit inside a verse and
+   come along with it.
+--------------------------------------------------------------- */
+function verseFromId(id) {
+  const m = /^v\d{2}\d{3}(\d{3})/.exec(id || "");
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function markVerses(html) {
+  try {
+    if (typeof DOMParser === "undefined") return { html, ok: false };
+    const doc = new DOMParser().parseFromString(`<div id="jn-root">${html}</div>`, "text/html");
+    const root = doc.getElementById("jn-root");
+    if (!root) return { html, ok: false };
+    if (root.querySelectorAll("b.verse-num, .verse-num").length === 0) return { html, ok: false };
+
+    const blocks = [...root.querySelectorAll("p, .block-indent")];
+    if (blocks.length === 0) return { html, ok: false };
+
+    let carry = null;
+    blocks.forEach((block) => {
+      const kids = [...block.childNodes];
+      let current = carry;
+      let bucket = [];
+
+      const flush = () => {
+        if (current == null || bucket.length === 0) { bucket = []; return; }
+        const span = doc.createElement("span");
+        span.className = "jn-v";
+        span.setAttribute("data-v", String(current));
+        block.insertBefore(span, bucket[0]);
+        bucket.forEach((n) => span.appendChild(n));
+        bucket = [];
+      };
+
+      kids.forEach((node) => {
+        const isNum = node.nodeType === 1 && node.classList?.contains("verse-num");
+        if (isNum) {
+          flush();
+          const n = verseFromId(node.getAttribute("id")) ??
+                    parseInt((node.textContent || "").replace(/\D+/g, ""), 10);
+          if (!Number.isNaN(n) && n) current = n;
+        }
+        bucket.push(node);
+      });
+      flush();
+      carry = current;
+    });
+
+    const out = root.innerHTML;
+    return { html: out, ok: out.includes('data-v="') };
+  } catch (e) {
+    console.warn("Verse marking failed:", e);
+    return { html, ok: false };
+  }
+}
+
 /* ===============================================================
    BIBLE — pick a book, pick a chapter, read it
    =============================================================== */
@@ -3344,6 +3425,10 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
   const [state, setState] = useState({ status: "idle" });
   const [tagging, setTagging] = useState(false);     // verse grid open
   const [tagRef, setTagRef] = useState(null);        // verse being tagged
+  const [selA, setSelA] = useState(null);            // tapped verse
+  const [selB, setSelB] = useState(null);            // second tap makes a range
+  const [marked, setMarked] = useState(true);        // did verse marking work
+  const bodyRef = useRef(null);
 
   const hasKey = !!(cfg.apiKey || cfg.proxyUrl);
   const book = chapter ? bookByName(chapter.book) : null;
@@ -3357,11 +3442,14 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
 
   const open = async (bk, ch) => {
     setChapter({ book: bk, ch });
-    setTagging(false); setTagRef(null);
+    setTagging(false); setTagRef(null); setSelA(null); setSelB(null);
     setState({ status: "loading" });
     window.scrollTo({ top: 0 });
     try {
-      setState({ status: "ok", ...(await getScripture(`${bk} ${ch}`, cfg, "reader")) });
+      const r = await getScripture(`${bk} ${ch}`, cfg, "reader");
+      const m = r.html ? markVerses(r.html) : { html: null, ok: false };
+      setMarked(m.ok);
+      setState({ status: "ok", ...r, html: m.html || r.html });
     } catch (e) {
       setState({ status: "error", message: e.message });
     }
@@ -3377,6 +3465,27 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     open(BOOKS[idx].name, ch);
   };
 
+  /* Paint the selection and anything already tagged, without re-fetching */
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || !chapter) return;
+    const lo = selA === null ? null : Math.min(selA, selB ?? selA);
+    const hi = selA === null ? null : Math.max(selA, selB ?? selA);
+    root.querySelectorAll("[data-v]").forEach((el) => {
+      const n = parseInt(el.getAttribute("data-v"), 10);
+      const ref = `${chapter.book} ${chapter.ch}:${n}`;
+      el.classList.toggle("on", lo !== null && n >= lo && n <= hi);
+      el.classList.toggle("has", (topics[ref] || []).length > 0);
+    });
+  }, [selA, selB, topics, state.status, chapter]);
+
+  const selRef = (() => {
+    if (!chapter || selA === null) return null;
+    const lo = Math.min(selA, selB ?? selA), hi = Math.max(selA, selB ?? selA);
+    return lo === hi ? `${chapter.book} ${chapter.ch}:${lo}`
+                     : `${chapter.book} ${chapter.ch}:${lo}-${hi}`;
+  })();
+
   const back = () => { setChapter(null); setBookOpen(null); setState({ status: "idle" }); };
   const done = chapter ? chapterDone(coverage, chapter.book, chapter.ch) : false;
 
@@ -3391,6 +3500,25 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
           <h2 className="sn-serif">{label}</h2>
           <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
         </div>
+
+        {selRef && (
+          <div className="sn-selbar">
+            <div className="sn-selbar-hd">
+              <span className="sn-mono">{selRef}</span>
+              <button className="sn-x" onClick={() => { setSelA(null); setSelB(null); }}>×</button>
+            </div>
+            <div className="sn-note" style={{ margin: "0 0 10px" }}>
+              {selB === null ? "Tap another verse to extend the range." : "Tap any verse to start again."}
+            </div>
+            <TopicTags refStr={selRef} />
+          </div>
+        )}
+
+        {!marked && state.status === "ok" && (
+          <div className="sn-note warn" style={{ marginTop: 12 }}>
+            Tapping verses isn't available for this passage — use the button below.
+          </div>
+        )}
 
         <div className="sn-tagzone">
           {!tagging && !tagRef && (
@@ -3439,7 +3567,15 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
 
         {state.status === "ok" && (
           <>
-            <div className="sn-biblebody">
+            <div className="sn-biblebody" ref={bodyRef}
+              onClick={(e) => {
+                const el = e.target.closest?.("[data-v]");
+                if (!el) return;
+                const n = parseInt(el.getAttribute("data-v"), 10);
+                if (selA === null) { setSelA(n); setSelB(null); }
+                else if (selB === null && n !== selA) setSelB(n);
+                else { setSelA(n); setSelB(null); }
+              }}>
               {state.html
                 ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
                 : <div className="sn-scripture">{state.text}</div>}
