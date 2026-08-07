@@ -854,6 +854,33 @@ function GlobalStyle() {
         border:1px solid var(--rule); border-radius:var(--r); padding:10px; white-space:pre-wrap;
         word-break:break-all; background:var(--card); }
 
+      /* progress map */
+      .sn-mapstats { display:flex; gap:16px; font-size:12.5px; color:var(--ink-3);
+        margin-bottom:14px; }
+      .sn-mapstats strong { font-family:'Lora',Georgia,serif; font-size:17px; font-weight:500;
+        color:var(--ink); margin-right:3px; }
+      .sn-maprow { padding:11px 0; border-bottom:1px solid var(--rule-soft); }
+      .sn-maprow-hd { display:flex; align-items:baseline; justify-content:space-between;
+        width:100%; background:none; border:none; padding:0 0 7px; cursor:pointer;
+        font-family:'Inter',system-ui,sans-serif; text-align:left; }
+      .sn-maprow-hd .nm { font-size:14.5px; font-weight:500; color:var(--ink); }
+      .sn-maprow-hd .pct { font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+        color:var(--ink-3); }
+      .sn-mapbar { display:flex; flex-wrap:wrap; gap:2px; }
+      .sn-mapcell { width:9px; height:9px; border-radius:2px; background:var(--rule);
+        display:inline-block; }
+      .sn-mapcell.done { background:var(--accent); }
+      .sn-mapcell.part { background:var(--ochre); }
+      .sn-mapcell.none { background:var(--rule); }
+      .sn-mapgrid { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:11px; }
+      .sn-mapgrid .sn-cell { font-size:12.5px; }
+      .sn-mapgrid .sn-cell.done { background:var(--accent); border-color:var(--accent); color:#fff; }
+      .sn-mapgrid .sn-cell.part { background:var(--ochre-wash); border-color:var(--ochre);
+        color:#8A6410; font-weight:600; }
+      .sn-mapkey { display:flex; gap:14px; align-items:center; margin-top:14px;
+        font-size:11.5px; color:var(--ink-3); }
+      .sn-mapkey span { display:flex; align-items:center; gap:5px; }
+
       .sn-search { display:flex; align-items:center; gap:11px;
         border-bottom:1px solid var(--rule); padding:6px 0 9px; margin-bottom:16px;
         transition:border-color .15s; }
@@ -3418,7 +3445,7 @@ function markVerses(html) {
 /* ===============================================================
    BIBLE — pick a book, pick a chapter, read it
    =============================================================== */
-function BibleTab({ coverage, onMarkChapters, onDevotion }) {
+function BibleTab({ coverage, onMarkChapters, onDevotion, jump, onJumped }) {
   const cfg = React.useContext(ScriptureContext);
   const { topics } = React.useContext(TopicsContext);
   const [q, setQ] = useState("");
@@ -3486,6 +3513,12 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     return lo === hi ? `${chapter.book} ${chapter.ch}:${lo}`
                      : `${chapter.book} ${chapter.ch}:${lo}-${hi}`;
   })();
+
+  /* Opened from the progress map */
+  useEffect(() => {
+    if (jump) { open(jump.book, jump.ch); onJumped?.(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump]);
 
   const back = () => { setChapter(null); setBookOpen(null); setState({ status: "idle" }); };
   const done = chapter ? chapterDone(coverage, chapter.book, chapter.ch) : false;
@@ -3814,6 +3847,106 @@ function About({ scripture }) {
 }
 
 /* ===============================================================
+   PROGRESS MAP — the whole Bible at a glance
+   =============================================================== */
+function bookProgress(coverage, b) {
+  let readV = 0, totalV = 0, doneCh = 0, partCh = 0;
+  const chapters = b.verses.map((count, i) => {
+    const read = Math.min(rangeTotal(coverage[`${b.name} ${i + 1}`]), count);
+    readV += read; totalV += count;
+    const state = read >= count ? "done" : read > 0 ? "part" : "none";
+    if (state === "done") doneCh += 1;
+    else if (state === "part") partCh += 1;
+    return { ch: i + 1, state, read, count };
+  });
+  return {
+    chapters, readV, totalV, doneCh, partCh,
+    pct: totalV ? Math.round((readV / totalV) * 100) : 0,
+  };
+}
+
+function ProgressMap({ coverage, scopeId, onOpenChapter, onClose }) {
+  const [filter, setFilter] = useState("all");   // all | started | untouched
+  const [openBook, setOpenBook] = useState(null);
+
+  const rows = useMemo(() => scopeBooks(scopeId).map((b) => ({
+    book: b, ...bookProgress(coverage, b),
+  })), [coverage, scopeId]);
+
+  const shown = useMemo(() => {
+    if (filter === "started") return rows.filter((r) => r.pct > 0 && r.pct < 100);
+    if (filter === "untouched") return rows.filter((r) => r.pct === 0);
+    return rows;
+  }, [rows, filter]);
+
+  const finished = rows.filter((r) => r.pct === 100).length;
+  const started = rows.filter((r) => r.pct > 0 && r.pct < 100).length;
+
+  return (
+    <div className="sn-panel">
+      <div className="sn-panel-hd">
+        <span>What you've read</span>
+        <button className="sn-link" onClick={onClose}>Close</button>
+      </div>
+
+      <div className="sn-mapstats">
+        <span><strong>{finished}</strong> finished</span>
+        <span><strong>{started}</strong> in progress</span>
+        <span><strong>{rows.length - finished - started}</strong> untouched</span>
+      </div>
+
+      <div className="sn-tseg" style={{ marginBottom: 14 }}>
+        {[["all", "Everything"], ["started", "In progress"], ["untouched", "Not started"]].map(([id, label]) => (
+          <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
+        ))}
+      </div>
+
+      {shown.length === 0 && (
+        <div className="sn-empty" style={{ padding: "24px 10px" }}>
+          {filter === "started" ? "Nothing half-finished — either untouched or done."
+            : filter === "untouched" ? "You've been in every book here."
+            : "Nothing in this scope."}
+        </div>
+      )}
+
+      {shown.map((r) => (
+        <div key={r.book.name} className="sn-maprow">
+          <button className="sn-maprow-hd"
+            onClick={() => setOpenBook(openBook === r.book.name ? null : r.book.name)}>
+            <span className="nm">{r.book.name}</span>
+            <span className="pct">{r.pct}%</span>
+          </button>
+
+          <div className="sn-mapbar">
+            {r.chapters.map((c) => (
+              <span key={c.ch} className={"sn-mapcell " + c.state}
+                title={`${r.book.name} ${c.ch}`} />
+            ))}
+          </div>
+
+          {openBook === r.book.name && (
+            <div className="sn-mapgrid">
+              {r.chapters.map((c) => (
+                <button key={c.ch} className={"sn-cell " + c.state}
+                  onClick={() => onOpenChapter(r.book.name, c.ch)}>
+                  {c.ch}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+
+      <div className="sn-mapkey">
+        <span><i className="sn-mapcell done" /> read</span>
+        <span><i className="sn-mapcell part" /> part-read</span>
+        <span><i className="sn-mapcell none" /> not yet</span>
+      </div>
+    </div>
+  );
+}
+
+/* ===============================================================
    HOME
    =============================================================== */
 function greeting() {
@@ -3886,8 +4019,9 @@ function PlanSetup({ plan, onSave, onCancel }) {
   );
 }
 
-function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom }) {
+function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom, onOpenChapter }) {
   const [showLog, setShowLog] = useState(false);
+  const [showMap, setShowMap] = useState(false);
   const [openLog, setOpenLog] = useState(null);
   const { topics } = React.useContext(TopicsContext);
 
@@ -3906,6 +4040,14 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom })
   const suggestion = useMemo(() => suggestNext(coverage, plan.scopeId, 3), [coverage, plan.scopeId]);
   const streak = streakOf(plan.log);
   const scope = SCOPES.find((sc) => sc.id === plan.scopeId);
+
+  if (showMap) {
+    return (
+      <ProgressMap coverage={coverage} scopeId={plan.scopeId}
+        onOpenChapter={(bk, ch) => { setShowMap(false); onOpenChapter(bk, ch); }}
+        onClose={() => setShowMap(false)} />
+    );
+  }
 
   return (
     <div className="sn-panel">
@@ -3961,10 +4103,12 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom })
         </div>
       )}
 
-      <button className="sn-btn sn-btn-ghost sn-btn-full sn-btn-sm" style={{ marginTop: 9 }}
-        onClick={() => setShowLog(true)}>
-        Log something else I read
-      </button>
+      <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+        <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ flex: 1 }}
+          onClick={() => setShowLog(true)}>Log a reading</button>
+        <button className="sn-btn sn-btn-ghost sn-btn-sm" style={{ flex: 1 }}
+          onClick={() => setShowMap(true)}>What I've read</button>
+      </div>
 
       {showLog && (
         <VersePicker onClose={() => setShowLog(false)} onPick={(ref) => onLog(ref)} />
@@ -4006,7 +4150,8 @@ function PlanCard({ plan, onSetup, onLog, onQuickRead, onRead, onDevotionFrom })
 }
 
 function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
-                onOpen, onOpenTopic, onAllTopics, onAbout, onRead, onMarkChapters }) {
+                onOpen, onOpenTopic, onAllTopics, onAbout, onRead, onMarkChapters,
+                onOpenChapter }) {
   const [editingPlan, setEditingPlan] = useState(false);
   const [topicQ, setTopicQ] = useState("");
   const shortcuts = useMemo(() => topTopics(topics, 6), [topics]);
@@ -4041,6 +4186,7 @@ function Home({ entries, plan, topics, onSetPlan, onLogReading, onDevotionFrom,
           onLog={onLogReading}
           onQuickRead={onLogReading}
           onRead={onRead}
+          onOpenChapter={onOpenChapter}
           onDevotionFrom={onDevotionFrom} />
       )}
 
@@ -4492,6 +4638,7 @@ function App() {
   const [seed, setSeed] = useState(null);        // prefill for a new devotion
   const [jumpTo, setJumpTo] = useState(null);    // topic or ref to open in Verses
   const [reading, setReading] = useState(null);  // { chapters, label } in the reader
+  const [bibleJump, setBibleJump] = useState(null); // chapter to open in the Bible tab
   const [viewing, setViewing] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -4720,6 +4867,7 @@ function App() {
       {tab === "home" && (
         <Home entries={entries} plan={plan} topics={topics} onAbout={() => go("about")}
           onRead={openReader} onMarkChapters={markChapters}
+          onOpenChapter={(bk, ch) => { setBibleJump({ book: bk, ch }); setTab("bible"); }}
           onSetPlan={choosePlan} onLogReading={logReading}
           onDevotionFrom={devotionFromDay}
           onOpen={(e) => { setViewing(e); setTab("library"); }}
@@ -4766,6 +4914,7 @@ function App() {
 
       {tab === "bible" && (
         <BibleTab coverage={plan?.coverage || {}} onMarkChapters={markChapters}
+          jump={bibleJump} onJumped={() => setBibleJump(null)}
           onDevotion={devotionFromDay} />
       )}
 
