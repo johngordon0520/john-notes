@@ -233,6 +233,15 @@ function scopeBooks(scopeId) {
 
 const bookByName = (name) => BOOKS.find((b) => b.name === name);
 
+/* Single-chapter books need care: to Crossway, "Jude 1" means verse 1,
+   not chapter 1. Ask for the book by name instead and the whole thing
+   comes back. Affects Obadiah, Philemon, 2 John, 3 John and Jude. */
+function chapterQuery(bookName, ch) {
+  const b = bookByName(bookName);
+  return b && b.verses.length === 1 ? bookName : `${bookName} ${ch}`;
+}
+
+
 /* ---------------- coverage ----------------
    { "John 1": [[1,6],[10,14]] } — merged, sorted verse ranges.
 ------------------------------------------- */
@@ -3438,7 +3447,7 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
     setState({ status: "loading" });
     window.scrollTo({ top: 0 });
     try {
-      const r = await getScripture(`${bk} ${ch}`, cfg, "reader");
+      const r = await getScripture(chapterQuery(bk, ch), cfg, "reader");
       const m = r.html ? markVerses(r.html) : { html: null, ok: false };
       setMarked(m.ok);
       setState({ status: "ok", ...r, html: m.html || r.html });
@@ -3631,7 +3640,7 @@ function Reader({ target, coverage, onMarkRead, onDevotion, onBack }) {
       {hasText && chapters.map((c) => (
         <div className="sn-readch" key={`${c.book} ${c.ch}`}>
           <div className="sn-readch-lbl sn-mono">{c.book} {c.ch}</div>
-          <ScriptureText refStr={`${c.book} ${c.ch}`} preset="reader" />
+          <ScriptureText refStr={chapterQuery(c.book, c.ch)} preset="reader" />
         </div>
       ))}
 
