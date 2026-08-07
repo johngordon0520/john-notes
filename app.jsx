@@ -3493,6 +3493,35 @@ function BibleTab({ coverage, onMarkChapters, onDevotion }) {
           <button className="sn-stepbtn" onClick={() => step(1)}>›</button>
         </div>
 
+        {!hasKey && (
+          <div className="sn-callout">
+            Add your ESV key under Backup &amp; storage to read passages here.
+          </div>
+        )}
+        {state.status === "loading" && <div className="sn-empty">Loading {label}…</div>}
+        {state.status === "error" && <div className="sn-note warn">{state.message}</div>}
+
+        {state.status === "ok" && (
+          <>
+            <div className="sn-biblebody" ref={bodyRef}
+              onClick={(e) => {
+                const el = e.target.closest?.("[data-v]");
+                if (!el) return;
+                const n = parseInt(el.getAttribute("data-v"), 10);
+                if (selA === null) { setSelA(n); setSelB(null); }
+                else if (selB === null && n !== selA) setSelB(n);
+                else { setSelA(n); setSelB(null); }
+              }}>
+              {state.html
+                ? <div className="sn-esvhtml" dangerouslySetInnerHTML={{ __html: state.html }} />
+                : <div className="sn-scripture">{state.text}</div>}
+            </div>
+            <div className="sn-scripture-attr">
+              ESV <a href="https://www.esv.org" target="_blank" rel="noreferrer">esv.org</a>
+            </div>
+          </>
+        )}
+
         {selRef && (
           <div className="sn-selbar">
             <div className="sn-selbar-hd">
